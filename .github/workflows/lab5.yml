@@ -1,0 +1,43 @@
+# Переиспользуемый workflow преподавателя для лабы 5.
+# Подключается в репозитории студента одной строкой:
+#
+#   jobs:
+#     backcheck:
+#       uses: bozhedom/backcheck/.github/workflows/lab5.yml@v1
+#
+# Что делает: на чистой машине GitHub копирует .env.example в .env, поднимает docker compose
+# и прогоняет чекер по базам лаб 1–5. Это и есть «тест чужой машины» без README-части.
+name: backcheck-lab5
+
+on:
+  workflow_call:
+    inputs:
+      backcheck-ref:
+        description: "Версия чекера (тег или ветка)"
+        type: string
+        default: v1
+      contract:
+        description: "Путь к contract.json"
+        type: string
+        default: contract.json
+
+jobs:
+  backcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Установить backcheck
+        run: pip install "git+https://github.com/bozhedom/backcheck@${{ inputs.backcheck-ref }}"
+
+      - name: Поднять проект и проверить лабы 1–5
+        run: backcheck --lab 5 --all --ci --contract "${{ inputs.contract }}"
+
+      - name: Логи контейнеров (если что-то упало)
+        if: failure()
+        run: docker compose logs --no-color --tail 200
