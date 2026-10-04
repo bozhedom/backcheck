@@ -36,9 +36,9 @@ def register(ctx: Ctx, it: Item) -> None:
     user = ctx.new_user("bcr")
     body = {**ctx.credentials(user), **ctx.contract["auth"].get("register_extra", {})}
     resp = ctx.expect(ctx.post(path, body, auth=None), range(200, 300), f"POST {path}")
-    it.ok(f"POST {path} ({user.username}) → {resp.status_code}")
+    it.ok(f"POST {path} ({user.username}): {resp.status_code}")
     ctx.expect(ctx.post(path, body, auth=None), 409, f"повторная регистрация {user.username}")
-    it.ok("повторная регистрация с тем же логином → 409")
+    it.ok("повторная регистрация с тем же логином: 409")
     ctx.state["registered"] = user
 
 
@@ -63,36 +63,36 @@ def needs_auth(ctx: Ctx, it: Item) -> None:
     for method, p, body in checks:
         resp = ctx.request(method, p, json_body=body, auth=None)
         if resp.status_code == 405:
-            continue  # такого метода нет — нечего защищать
+            continue  # такого метода нет, защищать нечего
         if resp.status_code in range(200, 300):
             if method == "POST" and resp.headers.get("content-type", "").startswith("application/json"):
                 created = resp.json()
                 if isinstance(created, dict) and ctx.id_field in created and p == ctx.collection():
                     ctx.track(ctx.item_path(created[ctx.id_field]), a)
-            raise Fail(f"{method} {p} без авторизации → {resp.status_code}: изменение прошло без входа")
+            raise Fail(f"{method} {p} без авторизации: {resp.status_code}: изменение прошло без входа")
         ctx.expect(resp, 401, f"{method} {p} без авторизации")
-        it.ok(f"{method} {p} без авторизации → 401")
+        it.ok(f"{method} {p} без авторизации: 401")
     resp = ctx.expect(ctx.post(ctx.collection(), ctx.body(), auth=a), range(200, 300), f"POST {ctx.collection()} с авторизацией")
     created = resp.json()
     ctx.track(ctx.item_path(created[ctx.id_field]), a)
-    it.ok(f"POST {ctx.collection()} с {ctx.scheme.capitalize()} → {resp.status_code}")
+    it.ok(f"POST {ctx.collection()} с {ctx.scheme.capitalize()}: {resp.status_code}")
     upd = ctx.expect(ctx.update(path, ctx.need("update"), ctx.body(), auth=a), range(200, 300), f"обновление {path} с авторизацией")
-    it.ok(f"{upd.request.method} {path} с авторизацией → {upd.status_code}")
+    it.ok(f"{upd.request.method} {path} с авторизацией: {upd.status_code}")
     ctx.expect(ctx.delete(path, auth=a), range(200, 300), f"DELETE {path} с авторизацией")
-    it.ok(f"DELETE {path} с авторизацией → 2xx")
+    it.ok(f"DELETE {path} с авторизацией: 2xx")
 
 
 def wrong_password(ctx: Ctx, it: Item) -> None:
     a, _ = _users(ctx)
     wrong = _bad_login(ctx, a.username, a.password + "x")
     ctx.expect(wrong, 401, "неверный пароль")
-    it.ok("неверный пароль → 401")
+    it.ok("неверный пароль: 401")
     ghost = _bad_login(ctx, "no_such_user_bc", "Whatever-123!")
     ctx.expect(ghost, 401, "несуществующий логин")
-    it.ok("несуществующий логин → 401")
+    it.ok("несуществующий логин: 401")
     if _normalize(wrong.text) != _normalize(ghost.text):
-        raise Fail(f"ответы различаются — подсказывают, что неверно: {wrong.text[:60]} / {ghost.text[:60]}")
-    it.ok("тела ответов одинаковые: не понять, что неверно — логин или пароль")
+        raise Fail(f"ответы различаются и подсказывают, что неверно: {wrong.text[:60]} / {ghost.text[:60]}")
+    it.ok("тела ответов одинаковые: по ним не понять, что неверно, логин или пароль")
 
 
 def _normalize(text: str) -> str:
@@ -122,16 +122,16 @@ def me(ctx: Ctx, it: Item) -> None:
     path = ctx.need("auth", "me_path")
     data = ctx.me(a)
     if a.username not in json.dumps(data, ensure_ascii=False):
-        raise Fail(f"GET {path} → нет логина пользователя")
+        raise Fail(f"GET {path}: нет логина пользователя")
     for key, value, is_key in _walk(data):
         name = key.split(".")[-1].lower()
         if is_key and re.search(r"pass|hash", name):
-            raise Fail(f"GET {path} → в ответе есть поле {key}")
+            raise Fail(f"GET {path}: в ответе есть поле {key}")
         if isinstance(value, str) and value.startswith(HASH_PREFIXES):
-            raise Fail(f"GET {path} → в ответе хэш пароля ({key})")
-    it.ok(f"GET {path} → 200, логин есть, пароля и хэша нет")
+            raise Fail(f"GET {path}: в ответе хэш пароля ({key})")
+    it.ok(f"GET {path}: 200, логин есть, пароля и хэша нет")
     ctx.expect(ctx.get(path, auth=None), 401, f"GET {path} без авторизации")
-    it.ok(f"GET {path} без авторизации → 401")
+    it.ok(f"GET {path} без авторизации: 401")
 
 
 def owner_from_server(ctx: Ctx, it: Item) -> None:
@@ -142,10 +142,10 @@ def owner_from_server(ctx: Ctx, it: Item) -> None:
     if owner_field not in obj:
         raise Fail(f"в ответе POST нет поля {owner_field}")
     if str(obj[owner_field]) == "999999":
-        raise Fail(f"{owner_field} взят из тела запроса — так можно создать запись от чужого имени")
+        raise Fail(f"{owner_field} взят из тела запроса: так можно создать запись от чужого имени")
     if str(obj[owner_field]) != str(me_data.get("id")):
         raise Fail(f"{owner_field}={obj[owner_field]}, а id пользователя в /auth/me = {me_data.get('id')}")
-    it.ok(f'прислали "{owner_field}": 999999 → сервер поставил {obj[owner_field]} (id из авторизации)')
+    it.ok(f'прислали "{owner_field}": 999999, сервер поставил {obj[owner_field]} (id из авторизации)')
 
 
 # ---------- ★ JWT ----------
@@ -170,11 +170,11 @@ def jwt_login(ctx: Ctx, it: Item) -> None:
     if token.count(".") != 2:
         raise Fail("токен не похож на JWT (нужно три части через точку)")
     payload = _b64json(token.split(".")[1])
-    it.ok(f"POST {ctx.need('auth', 'login_path')} → токен, payload: {json.dumps(payload, ensure_ascii=False)[:80]}")
+    it.ok(f"POST {ctx.need('auth', 'login_path')}: токен, payload: {json.dumps(payload, ensure_ascii=False)[:80]}")
     resp = ctx.post(ctx.collection(), ctx.body(), auth=None, headers={"Authorization": f"Bearer {token}"})
     ctx.expect(resp, range(200, 300), f"POST {ctx.collection()} с Bearer")
     ctx.track(ctx.item_path(resp.json()[ctx.id_field]), user)
-    it.ok(f"POST {ctx.collection()} с Authorization: Bearer → {resp.status_code}")
+    it.ok(f"POST {ctx.collection()} с заголовком Bearer: {resp.status_code}")
 
 
 def jwt_forgery(ctx: Ctx, it: Item) -> None:
@@ -196,26 +196,26 @@ def jwt_forgery(ctx: Ctx, it: Item) -> None:
         if resp.status_code in range(200, 300):
             ctx.track(ctx.item_path(resp.json().get(ctx.id_field)), "auto")
         ctx.expect(resp, 401, f"токен: {label}")
-        it.ok(f"{label} → 401")
+        it.ok(f"{label}: 401")
 
 
 def jwt_expiry(ctx: Ctx, it: Item) -> None:
     _, token = _jwt_user(ctx)
     data = _b64json(token.split(".")[1])
     if "exp" not in data:
-        raise Fail("в токене нет exp — он никогда не истекает")
+        raise Fail("в токене нет exp, поэтому он никогда не истекает")
     ttl = data["exp"] - data.get("iat", time.time())
     it.ok(f"exp есть, срок жизни ≈ {int(ttl)} с")
     left = data["exp"] - time.time()
     if left <= 12:
-        it.info(f"срок жизни короткий — ждём {max(0, int(left)) + 2} с и проверяем просроченный токен")
+        it.info(f"срок жизни короткий: ждём {max(0, int(left)) + 2} с и проверяем просроченный токен")
         time.sleep(max(0, left) + 2)
         resp = ctx.post(ctx.collection(), ctx.body(), auth=None, headers={"Authorization": f"Bearer {token}"})
         ctx.expect(resp, 401, "просроченный токен")
-        it.ok("просроченный токен → 401")
+        it.ok("просроченный токен: 401")
         return
     it.eye(f"Срок жизни ({int(ttl)} с) задаётся переменной окружения? "
-           "(или запусти сервис с TTL ≤ 10 с — тогда чекер проверит просрочку сам)")
+           "(или запусти сервис с TTL до 10 с, тогда чекер проверит просрочку сам)")
 
 
 def jwt_secret_env(ctx: Ctx, it: Item) -> None:
@@ -236,17 +236,17 @@ def roles(ctx: Ctx, it: Item) -> None:
     path = ctx.item_path(obj[ctx.id_field])
     resp = ctx.update(path, ctx.need("update"), ctx.body(), auth=b)
     ctx.expect(resp, 403, f"{resp.request.method} чужой записи")
-    it.ok(f"пользователь B меняет запись A → 403")
+    it.ok(f"пользователь B меняет запись A: 403")
     ctx.expect(ctx.delete(path, auth=b), 403, "DELETE чужой записи")
-    it.ok("пользователь B удаляет запись A → 403")
+    it.ok("пользователь B удаляет запись A: 403")
     ctx.expect(ctx.update(path, ctx.need("update"), ctx.body(), auth=a), range(200, 300), "владелец меняет свою запись")
-    it.ok("владелец A меняет свою запись → 2xx")
+    it.ok("владелец A меняет свою запись: 2xx")
     admin_data = ctx.need("auth", "admin")
     admin = User(admin_data["username"], admin_data["password"])
     ctx.expect(ctx.update(path, ctx.need("update"), ctx.body(), auth=admin), range(200, 300), "админ меняет чужую запись")
-    it.ok(f"админ «{admin.username}» меняет запись A → 2xx")
+    it.ok(f"админ «{admin.username}» меняет запись A: 2xx")
     ctx.expect(ctx.delete(path, auth=admin), range(200, 300), "админ удаляет чужую запись")
-    it.ok("админ удаляет запись A → 2xx")
+    it.ok("админ удаляет запись A: 2xx")
 
 
 def rate_limit(ctx: Ctx, it: Item) -> None:
@@ -262,33 +262,33 @@ def rate_limit(ctx: Ctx, it: Item) -> None:
         raise Fail("после 5+ неверных паролей подряд нет 429")
     first_429 = statuses.index(429) + 1
     if statuses[0] != 401:
-        raise Fail(f"первая неверная попытка → {statuses[0]}, ожидали 401")
+        raise Fail(f"первая неверная попытка: {statuses[0]}, ожидали 401")
     if first_429 > 6:
         raise Fail(f"429 только на попытке №{first_429}, ожидали не позже 6-й")
-    it.ok(f"попытка №{first_429} → 429")
+    it.ok(f"попытка №{first_429}: 429")
 
 
 LAB = Lab(
     number=3,
     title="Авторизация",
     base=[
-        ("1", "Регистрация и повтор → 409", register),
+        ("1", "Регистрация, повтор: 409", register),
         ("2", "Пароль хранится хэшем", password_hash),
         ("3", "Изменения только с авторизацией", needs_auth),
-        ("4", "Неверный пароль → 401 без подсказок", wrong_password),
+        ("4", "Неверный пароль: 401 без подсказок", wrong_password),
         ("5", "GET /auth/me без пароля и хэша", me),
         ("6", "Автор записи ставится сервером", owner_from_server),
     ],
     stars=[
         Star("★ JWT", score_first_required, [
             ("Вход и запросы с Bearer", jwt_login),
-            ("Подделанный токен → 401", jwt_forgery),
+            ("Подделанный токен: 401", jwt_forgery),
             ("Срок жизни токена", jwt_expiry),
             ("Секрет и срок из окружения", jwt_secret_env),
         ]),
         Star("★★ роли и лимит попыток", score_two, [
-            ("Роли: чужое → 403, админ может всё", roles),
-            ("5 неудачных входов → 429 (последним шагом)", rate_limit),
+            ("Роли: чужое 403, админ может всё", roles),
+            ("5 неудачных входов: 429 (последним шагом)", rate_limit),
         ]),
     ],
 )

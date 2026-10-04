@@ -41,14 +41,14 @@ def main(argv: list[str] | None = None) -> None:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="backcheck",
-        description="Проверяет лабы курса «Backend-разработка» по HTTP. Ещё команды: "
-                    "«backcheck jwt <токен>» — разобрать JWT, «backcheck ask --lab N» — вопрос и правка для приёма.",
+        description="Проверяет лабы курса «Backend-разработка» по HTTP. "
+                    "Ещё команды: «backcheck jwt <токен>» разбирает JWT, «backcheck ask --lab N» выдаёт вопрос и правку для приёма.",
     )
-    p.add_argument("--lab", type=int, choices=range(1, 6), required=True, metavar="N", help="номер лабы 1–5")
+    p.add_argument("--lab", type=int, choices=range(1, 6), required=True, metavar="N", help="номер лабы 1-5")
     p.add_argument("--stars", action="store_true", help="проверить ещё ★ и ★★")
     p.add_argument("--all", action="store_true", help="регрессия: базы всех лаб от 1 до N")
-    p.add_argument("--only", metavar="K", help="только пункт K базы (1–6)")
-    p.add_argument("-i", "--interactive", action="store_true", help="спрашивать [y/n] на пунктах «глазами»")
+    p.add_argument("--only", metavar="K", help="только пункт K базы (1-6)")
+    p.add_argument("-i", "--interactive", action="store_true", help="спрашивать [y/n] на пунктах ручной проверки")
     p.add_argument("--url", help="адрес сервиса вместо base_url из contract.json")
     p.add_argument("--contract", default="contract.json", help="путь к contract.json (по умолчанию ./contract.json)")
     p.add_argument("--report", action="store_true", help="записать backcheck-report.md для описания PR")
@@ -68,7 +68,7 @@ def check_command(argv: list[str]) -> int:
     try:
         contract = json.loads(contract_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        print(red(f"contract.json — невалидный JSON: {exc}"))
+        print(red(f"contract.json, невалидный JSON: {exc}"))
         return 2
 
     ctx = Ctx(contract, contract_path.parent, base_url=args.url, interactive=args.interactive,
@@ -119,7 +119,7 @@ def check_command(argv: list[str]) -> int:
         md = report(ctx, results, args)
         if args.report:
             (ctx.repo / "backcheck-report.md").write_text(md, encoding="utf-8")
-            print(dim("\nОтчёт записан в backcheck-report.md — вставь его в описание PR."))
+            print(dim("\nОтчёт записан в backcheck-report.md. Его содержимое вставляется в описание PR."))
         if os.environ.get("GITHUB_STEP_SUMMARY"):
             with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
                 fh.write(md + "\n")
@@ -133,7 +133,7 @@ def verdict(r: LabResult) -> str:
     if r.base_passed >= 4:
         return green("порог «принята» (≥ 4) пройден")
     if r.base_passed + r.base_manual >= 4:
-        return blue("порог пройдёт, если преподаватель подтвердит пункты «глазами»")
+        return blue("порог пройдёт, если подтвердятся пункты ручной проверки")
     return red("порог «принята» (≥ 4) не пройден")
 
 
@@ -141,16 +141,16 @@ def stars_text(r: LabResult) -> str:
     parts = []
     for star, _, lo, hi in r.stars:
         name = star.title.split()[0]
-        parts.append(f"{name} {lo}/2" if lo == hi else f"{name} {lo}–{hi}/2 (ждёт проверки глазами)")
+        parts.append(f"{name} {lo}/2" if lo == hi else f"{name} {lo}-{hi}/2 (ждёт ручной проверки)")
     return " · ".join(parts)
 
 
 def print_summary(results: list[LabResult]) -> None:
     print("\n" + bold("━━ Итог ━━"))
     for r in results:
-        marks = "".join({PASS: green("✓"), FAIL: red("✗"), MANUAL: blue("👁")}.get(i.status, "?") for i in r.base)
-        manual = f" + {r.base_manual} на проверку глазами" if r.base_manual else ""
-        print(f"Лаба {r.lab.number}: база {r.base_passed}/{len(r.base)}{manual}  {marks}  — {verdict(r)}")
+        marks = "".join({PASS: green("✓"), FAIL: red("✗"), MANUAL: blue("?")}.get(i.status, "?") for i in r.base)
+        manual = f" + {r.base_manual} на ручную проверку" if r.base_manual else ""
+        print(f"Лаба {r.lab.number}: база {r.base_passed}/{len(r.base)}{manual}  {marks}  {verdict(r)}")
         if r.stars:
             print(f"        {stars_text(r)}")
             print(dim("        звёздочки засчитываются, только если база принята и PR открыт вовремя"))
@@ -161,21 +161,21 @@ def _cell(text: str) -> str:
 
 
 def report(ctx: Ctx, results: list[LabResult], args) -> str:
-    icon = {PASS: "✓", FAIL: "✗", MANUAL: "👁", "half": "◐"}
+    icon = {PASS: "✓", FAIL: "✗", MANUAL: "?", "half": "◐"}
     now = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M %Z")
     out = [f"## backcheck: лаба {args.lab}", "",
            f"`backcheck {__version__}` · коммит `{ctx.commit()}` · {now} · `{ctx.base_url}`", ""]
     for r in results:
         out += [f"### Лаба {r.lab.number}. {r.lab.title}", "", "| № | Пункт | | Подробности |", "| --- | --- | --- | --- |"]
         for i in r.base:
-            detail = i.reason or (i.pending[0] + " (проверит преподаватель)" if i.pending else
+            detail = i.reason or (i.pending[0] + " (проверка вручную)" if i.pending else
                                   next((t for k, t in reversed(i.lines) if k == "ok"), ""))
             out.append(f"| {i.key} | {_cell(i.title)} | {icon.get(i.status, '?')} | {_cell(detail)} |")
         for star, parts, lo, hi in r.stars:
-            score = f"{lo}/2" if lo == hi else f"{lo}–{hi}/2"
+            score = f"{lo}/2" if lo == hi else f"{lo}-{hi}/2"
             names = ", ".join(f"{icon.get(p.status, '?')} {p.title}" for p in parts)
             out.append(f"| {star.title.split()[0]} | {_cell(names)} | {score} | |")
-        manual = f" + {r.base_manual} на проверку глазами" if r.base_manual else ""
+        manual = f" + {r.base_manual} на ручную проверку" if r.base_manual else ""
         out += ["", f"**База:** {r.base_passed}/{len(r.base)}{manual}" + (f" · {stars_text(r)}" if r.stars else ""), ""]
     if ctx.warnings:
         out += ["**Предупреждения:**", ""] + [f"- ⚠ {w}" for w in ctx.warnings] + [""]
@@ -212,6 +212,6 @@ def jwt_command(argv: list[str]) -> int:
         if "iat" in payload:
             print(f"Срок жизни: {payload['exp'] - payload['iat']} с")
     else:
-        print(yellow("В токене нет exp — он вечный."))
+        print(yellow("В токене нет exp, значит он вечный."))
     print(dim("Header и payload читаются без секрета: это base64, а не шифрование. Секрет нужен только для подписи."))
     return 0

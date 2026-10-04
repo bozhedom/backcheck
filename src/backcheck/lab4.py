@@ -1,4 +1,4 @@
-"""Лаба 4. Веб-клиент. Большая часть — глазами; чекер ведёт преподавателя по сценарию."""
+"""Лаба 4. Веб-клиент. Большая часть пунктов ручные: чекер ведёт по сценарию и проверяет то, что видно по HTTP."""
 
 from __future__ import annotations
 
@@ -32,16 +32,16 @@ def page_loads_list(ctx: Ctx, it: Item) -> None:
     except httpx.TransportError:
         raise Fail(f"фронт не отвечает: {url}")
     if resp.status_code != 200 or "html" not in resp.headers.get("content-type", ""):
-        raise Fail(f"GET {url} → {resp.status_code} {resp.headers.get('content-type', '')}, ожидали HTML-страницу")
-    it.ok(f"GET {url} → 200 HTML")
+        raise Fail(f"GET {url}: {resp.status_code} {resp.headers.get('content-type', '')}, ожидали HTML-страницу")
+    it.ok(f"GET {url}: 200 HTML")
     _marker(ctx)
     label = ctx.state["marker"][0]
     it.info(f"через API создана запись «{label}»")
-    it.eye(f"Открой {url}, DevTools → Network, обнови страницу: есть запрос к {ctx.collection()} и видна «{label}»?")
+    it.eye(f"Открой {url}, DevTools, вкладку Network, обнови страницу: есть запрос к {ctx.collection()} и видна «{label}»?")
 
 
 def login_form(ctx: Ctx, it: Item) -> None:
-    it.eye("В режиме инкогнито без входа: кнопки создания/удаления скрыты или показывают понятную ошибку; после входа — работают?")
+    it.eye("В режиме инкогнито без входа: кнопки создания/удаления скрыты или показывают понятную ошибку, а после входа работают?")
 
 
 def create_via_form(ctx: Ctx, it: Item) -> None:
@@ -52,24 +52,24 @@ def delete_via_ui(ctx: Ctx, it: Item) -> None:
     obj = _marker(ctx)
     label = ctx.state["marker"][0]
     if not it.pause(f"Удали «{label}» кнопкой в интерфейсе."):
-        it.eye(f"Удаление через интерфейс (запусти с -i — чекер проверит, что «{label}» удалена на сервере)")
+        it.eye(f"Удаление через интерфейс (с флагом -i чекер проверит, что «{label}» удалена на сервере)")
         return
     path = ctx.item_path(obj[ctx.id_field])
     resp = ctx.get(path)
     if resp.status_code != 404:
-        raise Fail(f"GET {path} → {resp.status_code}: со страницы пропало, а на сервере осталось")
-    it.ok(f"GET {path} → 404: запись действительно удалена на сервере")
+        raise Fail(f"GET {path}: {resp.status_code}, со страницы пропало, а на сервере осталось")
+    it.ok(f"GET {path}: 404, запись действительно удалена на сервере")
 
 
 def human_errors(ctx: Ctx, it: Item) -> None:
-    it.eye("Три ошибки — пустое поле (400), неверный пароль (401), несуществующая/уже удалённая запись (404): "
+    it.eye("Три ошибки: пустое поле (400), неверный пароль (401), несуществующая/уже удалённая запись (404): "
            "на странице понятный текст, а не тишина, консоль или сырой JSON?")
 
 
 def cors(ctx: Ctx, it: Item) -> None:
     front = ctx.need("frontend_url")
     if _origin(front) == _origin(ctx.base_url):
-        it.ok(f"фронт и API на одном origin ({_origin(front)}) — CORS не нужен")
+        it.ok(f"фронт и API на одном origin ({_origin(front)}), поэтому CORS не нужен")
         it.eye("Студент объяснил, почему у него нет ошибки CORS?")
         return
     origin = f"{urlsplit(front).scheme}://{urlsplit(front).netloc}"
@@ -80,7 +80,7 @@ def cors(ctx: Ctx, it: Item) -> None:
         "Access-Control-Request-Headers": "authorization, content-type",
     })
     if resp.status_code not in (200, 204):
-        raise Fail(f"preflight OPTIONS {path} с Origin {origin} → {resp.status_code}{ctx.short(resp)}")
+        raise Fail(f"preflight OPTIONS {path} с Origin {origin}: {resp.status_code}{ctx.short(resp)}")
     allow_origin = resp.headers.get("access-control-allow-origin", "")
     if allow_origin not in (origin, "*"):
         raise Fail(f"preflight: Access-Control-Allow-Origin = {allow_origin!r}, ожидали {origin!r}")
@@ -89,12 +89,12 @@ def cors(ctx: Ctx, it: Item) -> None:
         raise Fail(f"preflight: POST не разрешён (Access-Control-Allow-Methods: {methods})")
     headers = resp.headers.get("access-control-allow-headers", "").lower()
     if "authorization" not in headers and "*" not in headers:
-        raise Fail("preflight: заголовок Authorization не разрешён — запросы с токеном браузер не пустит")
-    it.ok(f"preflight OPTIONS {path} → {resp.status_code}, Allow-Origin: {allow_origin}, Authorization разрешён")
+        raise Fail("preflight: заголовок Authorization не разрешён, и запросы с токеном браузер не пустит")
+    it.ok(f"preflight OPTIONS {path}: {resp.status_code}, Allow-Origin: {allow_origin}, Authorization разрешён")
     simple = ctx.get(path, headers={"Origin": origin})
     if simple.headers.get("access-control-allow-origin") not in (origin, "*"):
         raise Fail(f"GET {path} с Origin {origin}: нет Access-Control-Allow-Origin в ответе")
-    it.ok(f"GET {path} с Origin {origin} → Access-Control-Allow-Origin есть")
+    it.ok(f"GET {path} с Origin {origin}: Access-Control-Allow-Origin есть")
     it.eye("Студент объяснил, что такое CORS и кто его проверяет?")
 
 
@@ -109,13 +109,13 @@ def related_page(ctx: Ctx, it: Item) -> None:
 
 
 def mobile(ctx: Ctx, it: Item) -> None:
-    it.eye("DevTools → режим устройства, ширина 375 px: нет горизонтальной прокрутки, кнопки нажимаются?")
+    it.eye("DevTools, режим устройства, ширина 375 px: нет горизонтальной прокрутки, кнопки нажимаются?")
 
 
 # ---------- ★★ ----------
 
 def spa(ctx: Ctx, it: Item) -> None:
-    it.eye("SPA на фреймворке: при переходах URL меняется без загрузки документа (Network → Doc пусто), F5 на глубокой ссылке работает?")
+    it.eye("SPA на фреймворке: при переходах URL меняется без загрузки документа (в Network на вкладке Doc пусто), F5 на глубокой ссылке работает?")
 
 
 def visualization(ctx: Ctx, it: Item) -> None:

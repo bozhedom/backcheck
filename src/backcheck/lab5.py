@@ -42,17 +42,17 @@ def dockerfile(ctx: Ctx, it: Item) -> None:
         lines = [ln.strip() for ln in f.read_text(encoding="utf-8", errors="ignore").splitlines()]
         copies = [ln for ln in lines if re.match(r"(COPY|ADD)\s", ln, re.I)]
         if any(re.search(r"(^|\s|/)\.env(\s|$)", ln) for ln in copies):
-            raise Fail(f"{rel}: .env копируется в образ — секреты окажутся внутри")
+            raise Fail(f"{rel}: .env копируется в образ, и секреты окажутся внутри")
         deps_at = next((i for i, ln in enumerate(copies) if any(d in ln for d in DEPS_FILES)), None)
         all_at = next((i for i, ln in enumerate(copies) if re.match(r"(COPY|ADD)\s+(\S+\s+)?\.\s+\S+", ln, re.I)), None)
         if deps_at is not None and (all_at is None or deps_at < all_at):
             it.ok(f"{rel}: зависимости копируются до кода (кэш слоёв работает)")
         elif all_at is not None and any(d.exists() for name in DEPS_FILES for d in f.parent.glob(f"*{name}*")):
-            it.warn(f"{rel}: весь код копируется до установки зависимостей — каждая правка пересобирает зависимости")
+            it.warn(f"{rel}: весь код копируется до установки зависимостей, и каждая правка пересобирает зависимости")
         else:
             it.ok(f"{rel}: найден")
     if not (ctx.repo / ".dockerignore").exists():
-        it.warn("нет .dockerignore — в образ может попасть .env, .git, node_modules")
+        it.warn("нет .dockerignore: в образ может попасть .env, .git, node_modules")
     if ctx.docker_ok():
         built = [name for name, svc in _config(ctx).get("services", {}).items() if "build" in svc]
         if not built:
@@ -78,7 +78,7 @@ def compose_up(ctx: Ctx, it: Item) -> None:
         raise Fail(f"не запущены сервисы: {', '.join(missing)} (запусти docker compose up -d)")
     it.ok(f"docker compose: запущены {', '.join(services)}")
     ctx.expect(ctx.get("/health", auth=None), 200, "GET /health")
-    it.ok("бэкенд в контейнере отвечает: GET /health → 200")
+    it.ok("бэкенд в контейнере отвечает: GET /health: 200")
     front = ctx.contract.get("frontend_url")
     if front:
         try:
@@ -86,14 +86,14 @@ def compose_up(ctx: Ctx, it: Item) -> None:
         except httpx.TransportError:
             raise Fail(f"фронт не отвечает: {front}")
         if resp.status_code != 200:
-            raise Fail(f"GET {front} → {resp.status_code}")
-        it.ok(f"фронт отвечает: {front} → 200")
+            raise Fail(f"GET {front}: {resp.status_code}")
+        it.ok(f"фронт отвечает: {front}: 200")
 
 
 def foreign_machine(ctx: Ctx, it: Item) -> None:
     if ctx.ci:
         it.ok("CI: проект поднялся на чистой машине GitHub только по .env.example")
-    it.eye("Сосед или преподаватель поднял проект строго по README за ≤ 5 минут (комментарий в PR)?")
+    it.eye("Проект подняли на другой машине строго по README не дольше чем за 5 минут (комментарий в PR)?")
 
 
 def volume(ctx: Ctx, it: Item) -> None:
@@ -109,7 +109,7 @@ def volume(ctx: Ctx, it: Item) -> None:
     if not ctx.wait_health(90):
         raise Fail("после docker compose up сервис не ответил за 90 секунд")
     ctx.expect(ctx.get(path), 200, f"GET {path} после down/up")
-    it.ok(f"GET {path} после down и up → 200: данные в volume")
+    it.ok(f"GET {path} после down и up: 200, данные в volume")
 
 
 def env_config(ctx: Ctx, it: Item) -> None:
@@ -123,7 +123,7 @@ def env_config(ctx: Ctx, it: Item) -> None:
         it.ok(".env не в git")
         history = ctx.git("log", "--all", "--format=", "--name-only") or ""
         if ".env" in history.split():
-            it.warn(".env когда-то был закоммичен — секреты из него остались в истории git, их стоит сменить")
+            it.warn(".env когда-то был закоммичен: секреты из него остались в истории git, их стоит сменить")
     compose = ctx.compose_file()
     if compose:
         leaks = []
@@ -132,7 +132,7 @@ def env_config(ctx: Ctx, it: Item) -> None:
             if m and not m.group(3).strip().strip("\"'").startswith("$") and m.group(3).strip() not in ("", "''", '""'):
                 leaks.append(f"строка {n}: {m.group(1)}")
         if leaks:
-            raise Fail(f"{compose.name}: секреты прямо в файле — " + "; ".join(leaks))
+            raise Fail(f"{compose.name}: секреты прямо в файле: " + "; ".join(leaks))
         it.ok(f"{compose.name}: секреты берутся из переменных (${{...}} / env_file)")
 
 
@@ -161,7 +161,7 @@ def _own_workflows(ctx: Ctx) -> list:
 def pipeline(ctx: Ctx, it: Item) -> None:
     own = _own_workflows(ctx)
     if not own:
-        raise Fail("нет своего workflow в .github/workflows (backcheck.yml преподавателя не считается)")
+        raise Fail("нет своего workflow в .github/workflows (backcheck.yml не считается, это общая проверка курса)")
     for f in own:
         text = f.read_text(encoding="utf-8", errors="ignore")
         runs_tests = re.search(r"pytest|npm (run )?test|go test|jest|vitest|mvn .*test|gradle.*test|dotnet test|phpunit", text)
@@ -197,8 +197,8 @@ def public_deploy(ctx: Ctx, it: Item) -> None:
     except httpx.TransportError:
         raise Fail(f"{url} не открывается")
     if resp.status_code != 200:
-        raise Fail(f"{url}/health → {resp.status_code}")
-    it.ok(f"{url}/health → 200")
+        raise Fail(f"{url}/health: {resp.status_code}")
+    it.ok(f"{url}/health: 200")
     it.info(f"проверь API целиком: backcheck --lab 3 --all --url {url}")
     it.eye("Ссылка открылась с телефона через мобильный интернет (не локальная сеть, не туннель с ноутбука)?")
 
@@ -221,7 +221,7 @@ def second_service(ctx: Ctx, it: Item) -> None:
     it.ok(f"сервис «{name}» в своём контейнере")
     trigger = spec["trigger"]
     ctx.expect(_trigger(ctx, trigger), range(200, 300), "действие, которое вызывает второй сервис")
-    it.ok(f"{trigger.get('method', 'POST')} {trigger['path']} → 2xx (основной сервис сходил во второй)")
+    it.ok(f"{trigger.get('method', 'POST')} {trigger['path']}: 2xx (основной сервис сходил во второй)")
     ctx.compose("stop", name)
     try:
         resp = _trigger(ctx, trigger)
@@ -230,10 +230,10 @@ def second_service(ctx: Ctx, it: Item) -> None:
     expected = spec.get("expect_when_down", [502, 503, 504])
     if resp.status_code not in expected:
         it.half = True
-        it.warn(f"при остановленном «{name}» ответ {resp.status_code}, ожидали {'/'.join(map(str, expected))} — "
+        it.warn(f"при остановленном «{name}» ответ {resp.status_code}, ожидали {'/'.join(map(str, expected))}: "
                 "основной сервис не обрабатывает недоступность зависимости")
         return
-    it.ok(f"«{name}» остановлен → {resp.status_code}{ctx.short(resp)}")
+    it.ok(f"«{name}» остановлен: {resp.status_code}{ctx.short(resp)}")
     it.eye(f"В docker compose logs видно, что основной сервис ходит в «{name}» по имени сервиса?")
 
 

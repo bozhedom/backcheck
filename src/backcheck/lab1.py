@@ -45,11 +45,11 @@ def health(ctx: Ctx, it: Item) -> None:
     resp = ctx.expect(ctx.get("/health", auth=None), 200, "GET /health")
     ctype = resp.headers.get("content-type", "")
     if "json" not in ctype:
-        raise Fail(f"GET /health → Content-Type {ctype or 'не указан'}, нужен application/json")
+        raise Fail(f"GET /health: Content-Type {ctype or 'не указан'}, нужен application/json")
     data = ctx.json(resp, "GET /health")
     if not isinstance(data, dict) or data.get("status") != "ok":
-        raise Fail(f'GET /health → ожидали {{"status": "ok"}}, получили {resp.text[:80]}')
-    it.ok(f"GET /health → 200 {resp.text.strip()[:60]}")
+        raise Fail(f'GET /health: ожидали {{"status": "ok"}}, получили {resp.text[:80]}')
+    it.ok(f"GET /health: 200 {resp.text.strip()[:60]}")
 
 
 def create(ctx: Ctx, it: Item) -> None:
@@ -58,13 +58,13 @@ def create(ctx: Ctx, it: Item) -> None:
     resp = ctx.expect(ctx.post(path, body), 201, f"POST {path}")
     obj = ctx.json(resp, f"POST {path}")
     if not isinstance(obj, dict) or ctx.id_field not in obj:
-        raise Fail(f"POST {path} → в ответе нет поля {ctx.id_field}")
+        raise Fail(f"POST {path}: в ответе нет поля {ctx.id_field}")
     ctx.track(ctx.item_path(obj[ctx.id_field]))
     lost = [k for k, v in body.items() if not same(v, obj.get(k))]
     if lost:
-        raise Fail(f"POST {path} → поля вернулись не такими, как отправили: {', '.join(lost)}")
+        raise Fail(f"POST {path}: поля вернулись не такими, как отправили: {', '.join(lost)}")
     ctx.state["item"] = obj
-    it.ok(f"POST {path} → 201, {ctx.id_field}={obj[ctx.id_field]}, поля совпадают с отправленными")
+    it.ok(f"POST {path}: 201, {ctx.id_field}={obj[ctx.id_field]}, поля совпадают с отправленными")
 
 
 def _ensure_item(ctx: Ctx) -> dict:
@@ -77,16 +77,16 @@ def read(ctx: Ctx, it: Item) -> None:
     obj = _ensure_item(ctx)
     item_id = obj[ctx.id_field]
     if not ctx.find_in_list(ctx.collection(), item_id):
-        raise Fail(f"GET {ctx.collection()} → в списке нет только что созданной записи {item_id}")
-    it.ok(f"GET {ctx.collection()} → 200, созданная запись в списке")
+        raise Fail(f"GET {ctx.collection()}: в списке нет только что созданной записи {item_id}")
+    it.ok(f"GET {ctx.collection()}: 200, созданная запись в списке")
     path = ctx.item_path(item_id)
     got = ctx.json(ctx.expect(ctx.get(path), 200, f"GET {path}"), f"GET {path}")
     if not isinstance(got, dict) or str(got.get(ctx.id_field)) != str(item_id):
-        raise Fail(f"GET {path} → вернулась другая запись")
-    it.ok(f"GET {path} → 200, та же запись")
+        raise Fail(f"GET {path}: вернулась другая запись")
+    it.ok(f"GET {path}: 200, та же запись")
     missing = ctx.item_path(ctx.contract.get("missing_id", "999999"))
     ctx.expect(ctx.get(missing), 404, f"GET {missing}")
-    it.ok(f"GET {missing} → 404")
+    it.ok(f"GET {missing}: 404")
 
 
 def update_delete(ctx: Ctx, it: Item) -> None:
@@ -94,16 +94,16 @@ def update_delete(ctx: Ctx, it: Item) -> None:
     path = ctx.item_path(obj[ctx.id_field])
     changes = ctx.need("update")
     resp = ctx.expect(ctx.update(path, changes, ctx.body()), range(200, 300), f"{'PATCH/PUT'} {path}")
-    it.ok(f"{resp.request.method} {path} → {resp.status_code}")
+    it.ok(f"{resp.request.method} {path}: {resp.status_code}")
     got = ctx.json(ctx.expect(ctx.get(path), 200, f"GET {path}"), f"GET {path}")
     stale = [k for k, v in changes.items() if not same(v, got.get(k))]
     if stale:
-        raise Fail(f"GET {path} после обновления → не изменились поля: {', '.join(stale)}")
-    it.ok(f"GET {path} → изменения сохранились")
+        raise Fail(f"GET {path} после обновления: не изменились поля: {', '.join(stale)}")
+    it.ok(f"GET {path}: изменения сохранились")
     ctx.expect(ctx.delete(path), 204, f"DELETE {path}")
-    it.ok(f"DELETE {path} → 204")
+    it.ok(f"DELETE {path}: 204")
     ctx.expect(ctx.get(path), 404, f"GET {path} после удаления")
-    it.ok(f"GET {path} после удаления → 404")
+    it.ok(f"GET {path} после удаления: 404")
 
 
 def bad_requests(ctx: Ctx, it: Item, strict: bool = False) -> None:
@@ -122,15 +122,15 @@ def bad_requests(ctx: Ctx, it: Item, strict: bool = False) -> None:
             obj = resp.json() if "json" in resp.headers.get("content-type", "") else {}
             if isinstance(obj, dict) and ctx.id_field in obj:
                 ctx.track(ctx.item_path(obj[ctx.id_field]))
-            raise Fail(f"{label} → {resp.status_code}: сервер принял неправильное тело")
+            raise Fail(f"{label}: {resp.status_code}: сервер принял неправильное тело")
         if resp.status_code not in allowed:
-            raise Fail(f"{label} → ожидали {want}, получили {resp.status_code}{ctx.short(resp)}")
-        it.ok(f"{label} → {resp.status_code}")
+            raise Fail(f"{label}: ожидали {want}, получили {resp.status_code}{ctx.short(resp)}")
+        it.ok(f"{label}: {resp.status_code}")
     ctx.expect(ctx.get("/health", auth=None), 200, "GET /health после плохих запросов")
     it.ok("сервер жив после плохих запросов")
     weird = ctx.get(ctx.item_path("abc"))
     if weird.status_code >= 500:
-        it.warn(f"GET {ctx.item_path('abc')} → {weird.status_code} (лучше 404 или 400)")
+        it.warn(f"GET {ctx.item_path('abc')}: {weird.status_code} (лучше 404 или 400)")
 
 
 # ---------- ★ ----------
@@ -149,14 +149,14 @@ def unified_errors(ctx: Ctx, it: Item) -> None:
         ctx.expect(resp, 400, f"ошибка в поле {case['field']}")
         data = ctx.json(resp, f"ошибка в поле {case['field']}")
         if not (isinstance(data, dict) and isinstance(data.get("error"), str) and data["error"]):
-            raise Fail(f'ошибка в поле {case["field"]} → нет "error" со строкой: {resp.text[:100]}')
+            raise Fail(f'ошибка в поле {case["field"]}: нет "error" со строкой: {resp.text[:100]}')
         if data.get("field") != case["field"]:
-            raise Fail(f'ошибка в поле {case["field"]} → "field": {data.get("field")!r}, ожидали {case["field"]!r}')
+            raise Fail(f'ошибка в поле {case["field"]}: "field": {data.get("field")!r}, ожидали {case["field"]!r}')
         covered.add(case["field"])
-        it.ok(f'{case["field"]} → 400 {{"error": "{data["error"][:50]}", "field": "{data["field"]}"}}')
+        it.ok(f'{case["field"]}: 400 {{"error": "{data["error"][:50]}", "field": "{data["field"]}"}}')
     not_covered = [k for k in ctx.need("create") if k not in covered]
     if not_covered:
-        raise Fail(f"в contract.json → errors нет случаев для полей: {', '.join(not_covered)}")
+        raise Fail(f"в contract.json в errors нет случаев для полей: {', '.join(not_covered)}")
     it.ok("ошибки описаны для всех полей сущности")
 
 
@@ -169,23 +169,23 @@ def filter_and_pages(ctx: Ctx, it: Item) -> None:
     resp = ctx.expect(ctx.get(path, params={param: value, "limit": 100}), 200, f"GET {path}?{param}={value}")
     items = ctx.items(ctx.json(resp, "фильтр"), "фильтр")
     if not items:
-        raise Fail(f"GET {path}?{param}={value} → пустой список")
+        raise Fail(f"GET {path}?{param}={value}: пустой список")
     wrong = [x.get(ctx.id_field) for x in items if not same(value, x.get(param))]
     if wrong or str(stranger) in {str(x.get(ctx.id_field)) for x in items}:
-        raise Fail(f"GET {path}?{param}={value} → в выдаче есть записи с другим {param}")
-    it.ok(f"GET {path}?{param}={value} → только подходящие записи ({len(items)})")
+        raise Fail(f"GET {path}?{param}={value}: в выдаче есть записи с другим {param}")
+    it.ok(f"GET {path}?{param}={value}: только подходящие записи ({len(items)})")
 
     first = ctx.items(ctx.json(ctx.expect(ctx.get(path, params={"limit": 2, "offset": 0}), 200, "limit=2"), "limit"), "limit")
     second = ctx.items(ctx.json(ctx.expect(ctx.get(path, params={"limit": 2, "offset": 2}), 200, "offset=2"), "offset"), "offset")
     if len(first) != 2:
-        raise Fail(f"GET {path}?limit=2&offset=0 → {len(first)} записей, ожидали 2")
+        raise Fail(f"GET {path}?limit=2&offset=0: {len(first)} записей, ожидали 2")
     if not second:
-        raise Fail(f"GET {path}?limit=2&offset=2 → пусто, а записей больше двух")
+        raise Fail(f"GET {path}?limit=2&offset=2: пусто, а записей больше двух")
     ids1 = {str(x.get(ctx.id_field)) for x in first}
     ids2 = {str(x.get(ctx.id_field)) for x in second}
     if ids1 & ids2:
         raise Fail("страницы offset=0 и offset=2 пересекаются")
-    it.ok(f"limit=2&offset=0 → 2 записи, limit=2&offset=2 → {len(second)}, без пересечений")
+    it.ok(f"limit=2&offset=0: 2 записи, limit=2&offset=2: {len(second)}, без пересечений")
     del mine
 
 
@@ -200,15 +200,15 @@ def docs(ctx: Ctx, it: Item) -> None:
     if resp.status_code != 200:
         resp = ctx.client.get("/docs", follow_redirects=True)
     if "html" not in resp.headers.get("content-type", ""):
-        raise Fail("GET /docs → не HTML-страница")
-    it.ok("GET /docs → 200 HTML")
+        raise Fail("GET /docs: не HTML-страница")
+    it.ok("GET /docs: 200 HTML")
     candidates = ([ctx.contract["openapi_path"]] if ctx.contract.get("openapi_path") else []) + list(OPENAPI_PATHS)
     for path in candidates:
         r = ctx.get(path, auth=None)
         if r.status_code == 200 and "json" in r.headers.get("content-type", ""):
             spec = r.json()
             if ("openapi" in spec or "swagger" in spec) and any(ctx.resource in p for p in spec.get("paths", {})):
-                it.ok(f"{path} → OpenAPI {spec.get('openapi') or spec.get('swagger')}, путей: {len(spec['paths'])}")
+                it.ok(f"{path}: OpenAPI {spec.get('openapi') or spec.get('swagger')}, путей: {len(spec['paths'])}")
                 it.eye("В Swagger UI видны все эндпоинты и «Try it out» работает?")
                 return
     raise Fail("не нашли OpenAPI-спецификацию с путями ресурса (укажи openapi_path в contract.json)")
@@ -218,7 +218,7 @@ def request_log(ctx: Ctx, it: Item) -> None:
     code = f"backcheck-log-{tag()}"
     path = ctx.item_path(code)
     resp = ctx.get(path)
-    it.info(f"отправлен GET {path} → {resp.status_code}")
+    it.info(f"отправлен GET {path}: {resp.status_code}")
     if ctx.docker_ok() and ctx.contract.get("compose_service") and _compose_running(ctx):
         logs = ctx.compose("logs", "--no-color", "--tail", "300", ctx.contract["compose_service"], show=False)
         line = next((ln for ln in logs.splitlines() if code in ln), None)
@@ -248,10 +248,10 @@ LAB = Lab(
     base=[
         ("1", "README и requests.http", readme_and_requests),
         ("2", "GET /health", health),
-        ("3", "Создание: POST → 201 и id", create),
+        ("3", "Создание: 201 и id", create),
         ("4", "Получение: список, по id, 404", read),
         ("5", "Обновление и удаление", update_delete),
-        ("6", "Плохие запросы → 400, сервер жив", bad_requests),
+        ("6", "Плохие запросы: 400, сервер жив", bad_requests),
     ],
     stars=[
         Star("★ валидация и пагинация", score_two, [

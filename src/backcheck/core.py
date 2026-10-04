@@ -22,7 +22,7 @@ PASS, FAIL, MANUAL, HALF = "pass", "fail", "manual", "half"
 
 
 class Fail(Exception):
-    """Пункт не засчитан. Текст исключения показывается студенту."""
+    """Пункт не засчитан. Текст исключения печатается в выводе."""
 
 
 class Unreachable(Exception):
@@ -72,7 +72,7 @@ class User:
 
 @dataclass
 class Item:
-    """Один пункт базы или одна часть звёздочки. Собирает строки вывода и ответы «глазами»."""
+    """Один пункт базы или одна часть звёздочки. Собирает строки вывода и ответы ручной проверки."""
 
     ctx: "Ctx"
     key: str
@@ -85,7 +85,7 @@ class Item:
     reason: str = ""
 
     def _print(self, kind: str, text: str) -> None:
-        marks = {"ok": green("✓"), "bad": red("✗"), "info": dim("·"), "warn": yellow("⚠"), "eye": blue("👁")}
+        marks = {"ok": green("✓"), "bad": red("✗"), "info": dim("·"), "warn": yellow("⚠"), "eye": blue("?")}
         print(f"      {marks[kind]} {text}")
 
     def ok(self, text: str) -> None:
@@ -102,14 +102,14 @@ class Item:
         self._print("warn", text)
 
     def eye(self, question: str) -> bool | None:
-        """Вопрос преподавателю. Без -i вопрос откладывается, пункт помечается «на проверку глазами»."""
+        """Ручная проверка. Без -i вопрос откладывается, и пункт помечается как ручной."""
         if not self.ctx.interactive:
             self.pending.append(question)
             self.lines.append(("eye", question))
-            self._print("eye", question + dim("  (проверит преподаватель)"))
+            self._print("eye", question + dim("  (проверка вручную)"))
             return None
-        answer = self.ctx.ask_yes_no(f"      {blue('👁')} {question}")
-        self.lines.append(("eye", f"{question} — {'да' if answer else 'нет'}"))
+        answer = self.ctx.ask_yes_no(f"      {blue('?')} {question}")
+        self.lines.append(("eye", f"{question}, {'да' if answer else 'нет'}"))
         if not answer:
             self.eye_failed = True
         return answer
@@ -118,7 +118,7 @@ class Item:
         """Просит сделать действие руками. Возвращает False, если режим не интерактивный."""
         if not self.ctx.interactive:
             return False
-        print(f"      {yellow('⏸')} {instruction}")
+        print(f"      {yellow('>>')} {instruction}")
         input(dim("        нажми Enter, когда готово… "))
         return True
 
@@ -204,8 +204,8 @@ class Ctx:
         if self.verbose:
             sent = content.decode(errors="replace") if content is not None else (
                 json.dumps(json_body, ensure_ascii=False) if json_body is not ... else "")
-            print(dim(f"        → {method} {resp.request.url} {sent[:200]}"))
-            print(dim(f"        ← {resp.status_code} {resp.text[:300]}"))
+            print(dim(f"        > {method} {resp.request.url} {sent[:200]}"))
+            print(dim(f"        < {resp.status_code} {resp.text[:300]}"))
         return resp
 
     def get(self, path, **kw): return self.request("GET", path, **kw)
@@ -213,7 +213,7 @@ class Ctx:
     def delete(self, path, **kw): return self.request("DELETE", path, **kw)
 
     def update(self, path: str, changes: dict, full: dict, **kw) -> httpx.Response:
-        """PATCH, а если его нет (405/501) — PUT с полным телом."""
+        """PATCH, а если его нет (405/501), то PUT с полным телом."""
         resp = self.request("PATCH", path, json_body=changes, **kw)
         if resp.status_code in (405, 501):
             resp = self.request("PUT", path, json_body={**full, **changes}, **kw)
@@ -228,15 +228,15 @@ class Ctx:
         ok = resp.status_code in status if isinstance(status, (tuple, range)) else resp.status_code == status
         if not ok:
             want = status if isinstance(status, int) else (
-                f"{status.start}–{status.stop - 1}" if isinstance(status, range) else " или ".join(map(str, status)))
-            raise Fail(f"{what} → ожидали {want}, получили {resp.status_code}{self.short(resp)}")
+                f"{status.start}-{status.stop - 1}" if isinstance(status, range) else " или ".join(map(str, status)))
+            raise Fail(f"{what}: ожидали {want}, получили {resp.status_code}{self.short(resp)}")
         return resp
 
     def json(self, resp: httpx.Response, what: str) -> Any:
         try:
             return resp.json()
         except ValueError:
-            raise Fail(f"{what} → ответ не JSON:{self.short(resp)}")
+            raise Fail(f"{what}: ответ не JSON:{self.short(resp)}")
 
     def items(self, data: Any, what: str) -> list:
         """Список из ответа: голый массив или обёртка {"items": [...]}."""
@@ -247,10 +247,10 @@ class Ctx:
             for candidate in ([key] if key else []) + ["items", "data", "results"]:
                 if isinstance(data.get(candidate), list):
                     return data[candidate]
-        raise Fail(f"{what} → ожидали массив или объект со списком (list_key), получили {str(data)[:100]}")
+        raise Fail(f"{what}: ожидали массив или объект со списком (list_key), получили {str(data)[:100]}")
 
     def find_in_list(self, path: str, item_id: Any) -> bool:
-        """Ищет запись в списке. Если список с пагинацией — листает страницы по 100."""
+        """Ищет запись в списке. Если у списка есть пагинация, листает страницы по 100."""
         seen: set[str] = set()
         pages = [None] + [{"limit": 100, "offset": offset} for offset in range(0, 2000, 100)]
         for params in pages:
@@ -275,7 +275,7 @@ class Ctx:
         self.expect(resp, range(200, 300), what or f"POST {path}")
         obj = self.json(resp, f"POST {path}")
         if not isinstance(obj, dict) or self.id_field not in obj:
-            raise Fail(f"POST {path} → в ответе нет поля {self.id_field}")
+            raise Fail(f"POST {path}: в ответе нет поля {self.id_field}")
         self.track(self.item_path(obj[self.id_field]), user)
         return obj
 
@@ -326,7 +326,7 @@ class Ctx:
         body = {**self.credentials(user), **self.contract["auth"].get("register_extra", {})}
         resp = self.post(path, body, auth=None)
         if resp.status_code not in range(200, 300):
-            raise Fail(f"не удалось зарегистрировать тестового пользователя: POST {path} → {resp.status_code}{self.short(resp)}")
+            raise Fail(f"не удалось зарегистрировать тестового пользователя: POST {path}: {resp.status_code}{self.short(resp)}")
         return user
 
     def login(self, user: User) -> str:
@@ -337,7 +337,7 @@ class Ctx:
         token_field = self.contract["auth"].get("token_field", "access_token")
         token = data.get(token_field) if isinstance(data, dict) else None
         if not isinstance(token, str) or not token:
-            raise Fail(f"POST {path} → в ответе нет токена в поле {token_field}")
+            raise Fail(f"POST {path}: в ответе нет токена в поле {token_field}")
         return token
 
     def auth_header(self, user: User) -> str:
@@ -353,7 +353,7 @@ class Ctx:
         resp = self.expect(self.get(path, auth=user), 200, f"GET {path}")
         data = self.json(resp, f"GET {path}")
         if not isinstance(data, dict):
-            raise Fail(f"GET {path} → ожидали объект")
+            raise Fail(f"GET {path}: ожидали объект")
         user.id = data.get("id", user.id)
         return data
 
@@ -396,7 +396,7 @@ class Ctx:
 
     @staticmethod
     def ask_yes_no(question: str) -> bool:
-        # «т» — это клавиша n в русской раскладке
+        # «т» стоит на клавише n в русской раскладке
         while True:
             answer = input(f"{question} [y/n] ").strip().lower()
             if answer in ("y", "yes", "д", "да"):
@@ -443,26 +443,26 @@ def tag(n: int = 4) -> str:
 # ---------- Звёздочки: правила подсчёта ----------
 
 def score_two(parts: list[bool]) -> int:
-    """Две части: обе — 2, одна — 1."""
+    """Две части: обе дают 2 балла, одна даёт 1."""
     n = sum(parts)
     return 2 if n == len(parts) else (1 if n else 0)
 
 
 def score_three(parts: list[bool]) -> int:
-    """Три части: все — 2, две — 1, меньше — 0."""
+    """Три части: все дают 2 балла, две дают 1, меньше дают 0."""
     n = sum(parts)
     return 2 if n == 3 else (1 if n == 2 else 0)
 
 
 def score_first_required(parts: list[bool]) -> int:
-    """Первая часть обязательна: без неё 0; всё — 2; иначе 1."""
+    """Первая часть обязательна: без неё 0; всё вместе 2; иначе 1."""
     if not parts[0]:
         return 0
     return 2 if all(parts) else 1
 
 
 def score_any(parts: list[bool]) -> int:
-    """Одна из частей на выбор (лаба 5 ★★): полностью — 2, частично — 1."""
+    """Одна из частей на выбор (лаба 5 ★★): полностью 2, частично 1."""
     return 2 if any(parts) else 0
 
 
@@ -510,7 +510,7 @@ def run_item(ctx: Ctx, key: str, title: str, fn: Callable[[Ctx, Item], None], in
     try:
         fn(ctx, item)
         if item.eye_failed:
-            item.status, item.reason = FAIL, "не подтверждено глазами"
+            item.status, item.reason = FAIL, "не подтверждено при ручной проверке"
         elif item.half:
             item.status = HALF
         elif item.pending:
@@ -522,17 +522,17 @@ def run_item(ctx: Ctx, key: str, title: str, fn: Callable[[Ctx, Item], None], in
     except ContractError as exc:
         item.status, item.reason = FAIL, str(exc)
         item.lines.append(("bad", str(exc)))
-        item._print("bad", f"{exc} — допиши contract.json")
+        item._print("bad", f"{exc}. Нужно дописать contract.json")
     except Unreachable as exc:
         item.status, item.reason = FAIL, str(exc)
         item.lines.append(("bad", str(exc)))
         item._print("bad", str(exc))
         ctx.wait_health(10)
     verdict = {
-        PASS: green("→ ✓ засчитано"),
-        FAIL: red("→ ✗ не засчитано"),
-        MANUAL: blue("→ 👁 авто-часть пройдена, остальное проверит преподаватель"),
-        HALF: yellow("→ ◐ частично"),
+        PASS: green("итог: ✓ засчитано"),
+        FAIL: red("итог: ✗ не засчитано"),
+        MANUAL: blue("итог: ? автоматическая часть пройдена, остальное проверяется вручную"),
+        HALF: yellow("итог: ◐ частично"),
     }[item.status]
     print(f"      {verdict}")
     return item

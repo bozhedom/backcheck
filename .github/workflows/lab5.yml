@@ -1,12 +1,12 @@
-# Переиспользуемый workflow преподавателя для лабы 5.
-# Подключается в репозитории студента одной строкой:
+# Общий workflow проверки лабы 5.
+# Подключается в репозитории проекта так:
 #
 #   jobs:
 #     backcheck:
 #       uses: bozhedom/backcheck/.github/workflows/lab5.yml@v1
 #
 # Что делает: на чистой машине GitHub копирует .env.example в .env, поднимает docker compose
-# и прогоняет чекер по базам лаб 1–5. Это и есть «тест чужой машины» без README-части.
+# и прогоняет чекер по базам лаб 1-5. Так проверяется запуск на чужой машине (кроме чтения README).
 name: backcheck-lab5
 
 on:
@@ -35,7 +35,7 @@ jobs:
       - name: Установить backcheck
         run: pip install "git+https://github.com/bozhedom/backcheck@${{ inputs.backcheck-ref }}"
 
-      - name: Поднять проект и проверить лабы 1–5
+      - name: Поднять проект и проверить лабы 1-5
         run: backcheck --lab 5 --all --ci --contract "${{ inputs.contract }}"
 
       - name: Логи контейнеров (если что-то упало)

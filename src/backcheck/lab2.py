@@ -24,7 +24,7 @@ def survives_restart(ctx: Ctx, it: Item) -> None:
     path = ctx.item_path(obj[ctx.id_field])
     it.ok(f"создана запись {path}")
     if ctx.interactive:
-        it.pause("Останови сервис (Ctrl+C) и запусти заново — преподаватель смотрит.")
+        it.pause("Останови сервис (Ctrl+C) и запусти заново.")
     elif ctx.docker_ok() and ctx.contract.get("compose_service"):
         ctx.compose("restart", ctx.contract["compose_service"])
     else:
@@ -36,7 +36,7 @@ def survives_restart(ctx: Ctx, it: Item) -> None:
     lost = [k for k, v in ctx.need("create").items() if not same(v, got.get(k))]
     if lost:
         raise Fail(f"после перезапуска изменились поля: {', '.join(lost)}")
-    it.ok(f"GET {path} после перезапуска → 200, запись на месте")
+    it.ok(f"GET {path} после перезапуска: 200, запись на месте")
 
 
 def child_entity(ctx: Ctx, it: Item) -> None:
@@ -48,19 +48,19 @@ def child_entity(ctx: Ctx, it: Item) -> None:
     resp = ctx.expect(ctx.post(path, child["create"]), 201, f"POST {path}")
     kid = ctx.json(resp, f"POST {path}")
     if not isinstance(kid, dict) or ctx.id_field not in kid:
-        raise Fail(f"POST {path} → в ответе нет {ctx.id_field}")
+        raise Fail(f"POST {path}: в ответе нет {ctx.id_field}")
     if parent_field:
         if parent_field not in kid:
-            raise Fail(f"POST {path} → в ответе нет поля связи {parent_field}")
+            raise Fail(f"POST {path}: в ответе нет поля связи {parent_field}")
         if str(kid[parent_field]) != str(pid):
-            raise Fail(f"POST {path} → {parent_field}={kid[parent_field]}, ожидали {pid}")
-    it.ok(f"POST {path} → 201, {parent_field or 'связь'}={pid}")
+            raise Fail(f"POST {path}: {parent_field}={kid[parent_field]}, ожидали {pid}")
+    it.ok(f"POST {path}: 201, {parent_field or 'связь'}={pid}")
     ctx.state["child"] = (pid, kid)
 
     listing = ctx.items(ctx.json(ctx.expect(ctx.get(path), 200, f"GET {path}"), f"GET {path}"), f"GET {path}")
     if str(kid[ctx.id_field]) not in {str(x.get(ctx.id_field)) for x in listing}:
-        raise Fail(f"GET {path} → в списке нет созданного ребёнка")
-    it.ok(f"GET {path} → 200, ребёнок в списке")
+        raise Fail(f"GET {path}: в списке нет созданного ребёнка")
+    it.ok(f"GET {path}: 200, ребёнок в списке")
 
     other = ctx.create(ctx.body())
     other_path = ctx.child_path(other[ctx.id_field])
@@ -68,12 +68,12 @@ def child_entity(ctx: Ctx, it: Item) -> None:
     listing = ctx.items(ctx.json(ctx.get(path), "GET"), "GET")
     foreign = [x for x in listing if parent_field and str(x.get(parent_field)) != str(pid)]
     if foreign:
-        raise Fail(f"GET {path} → в списке дети другого родителя")
+        raise Fail(f"GET {path}: в списке дети другого родителя")
     it.ok("дети другого родителя в список не попадают")
 
     orphan = ctx.post(ctx.child_path(ctx.contract.get("missing_id", "999999")), child["create"])
     if orphan.status_code >= 500 or orphan.status_code in range(200, 300):
-        it.warn(f"ребёнок к несуществующему родителю → {orphan.status_code} (лучше 404)")
+        it.warn(f"ребёнок к несуществующему родителю: {orphan.status_code} (лучше 404)")
 
 
 def schema_in_repo(ctx: Ctx, it: Item) -> None:
@@ -88,7 +88,7 @@ def schema_in_repo(ctx: Ctx, it: Item) -> None:
     if found:
         it.info("в репо найдено: " + ", ".join(found[:6]))
     else:
-        it.warn("не нашли ни миграций, ни .sql — покажи, откуда берётся схема")
+        it.warn("не нашли ни миграций, ни .sql: на приёме нужно показать, откуда берётся схема")
     it.eye("Студент показал, как схема создаётся из репо (скрипт/миграции, команда применения)?")
 
 
@@ -98,11 +98,11 @@ def env_config(ctx: Ctx, it: Item) -> None:
     it.ok(".env.example есть")
     files = ctx.tracked_files()
     if files is None:
-        it.warn("не git-репозиторий — не проверить, что .env не закоммичен")
+        it.warn("это не git-репозиторий, поэтому не проверить, что .env не закоммичен")
         files = [str(p.relative_to(ctx.repo)) for p in ctx.repo.rglob("*") if p.is_file()
                  and not {".git", "node_modules", ".venv", "venv"} & set(p.parts)]
     elif ".env" in files:
-        raise Fail(".env отслеживается git — убери его (git rm --cached .env) и добавь в .gitignore")
+        raise Fail(".env отслеживается git: убери его (git rm --cached .env) и добавь в .gitignore")
     else:
         it.ok(".env не в git")
     leaks = []
@@ -133,7 +133,7 @@ def er_diagram(ctx: Ctx, it: Item) -> None:
         entities = sorted(set(re.findall(r"^\s*(\w+)\s*\{", text, re.M)))
         it.ok("в README есть Mermaid erDiagram" + (f": {', '.join(entities)}" if entities else ""))
     elif re.search(r"!\[[^\]]*\]\([^)]+\)", text):
-        it.info("в README есть картинка — возможно, это ER-диаграмма")
+        it.info("в README есть картинка, возможно это ER-диаграмма")
     else:
         raise Fail("в README нет ER-диаграммы (```mermaid erDiagram``` или картинки)")
     it.eye("На диаграмме обе сущности, ключи и связь 1:N?")
@@ -156,12 +156,12 @@ def sql_injection(ctx: Ctx, it: Item) -> None:
         evil = "' OR 1=1 --"
         resp = ctx.get(ctx.collection(), params={flt["param"]: evil})
         if resp.status_code >= 500:
-            raise Fail(f"?{flt['param']}={evil} → {resp.status_code}")
+            raise Fail(f"?{flt['param']}={evil}: {resp.status_code}")
         if resp.status_code == 200:
             items = ctx.items(ctx.json(resp, "фильтр"), "фильтр")
             if any(x.get(flt["param"]) != evil for x in items):
-                raise Fail(f"?{flt['param']}={evil} вернул записи с другими значениями — инъекция в фильтре")
-        it.ok(f"?{flt['param']}={evil!r} → {resp.status_code}, лишнего не вернул")
+                raise Fail(f"?{flt['param']}={evil} вернул записи с другими значениями: инъекция в фильтре")
+        it.ok(f"?{flt['param']}={evil!r}: {resp.status_code}, лишнего не вернул")
 
 
 def cascade_demo(ctx: Ctx) -> None:
@@ -171,7 +171,7 @@ def cascade_demo(ctx: Ctx) -> None:
     pid, kid = ctx.state.pop("child")
     resp = ctx.delete(ctx.item_path(pid))
     after = ctx.get(ctx.child_path(pid))
-    print(yellow(f"\n  Демо: удалили родителя {pid} → {resp.status_code}; GET его детей → {after.status_code}"
+    print(yellow(f"\n  Демо: удалили родителя {pid}, ответ {resp.status_code}; GET его детей, ответ {after.status_code}"
                  f"{ctx.short(after)}"))
     print(yellow("  Спроси: что стало с дочерними записями и почему (CASCADE, RESTRICT, SET NULL)?"))
 
@@ -202,14 +202,14 @@ def sql_filter_sort(ctx: Ctx, it: Item) -> None:
         items = ctx.items(ctx.json(resp, "sort"), "sort")
         keys = [x.get(sort["field"]) for x in items if x.get(sort["field"]) is not None]
         if not is_sorted_any(keys, reverse=bool(direction)):
-            raise Fail(f"?{sort['param']}={value} → порядок {sort['field']} неверный")
-        it.ok(f"?{sort['param']}={value} → отсортировано ({len(items)})")
+            raise Fail(f"?{sort['param']}={value}: порядок {sort['field']} неверный")
+        it.ok(f"?{sort['param']}={value}: отсортировано ({len(items)})")
     if ctx.has("filter"):
         flt = ctx.need("filter")
         items = ctx.items(ctx.json(ctx.get(path, params={flt["param"]: flt["value"]}), "filter"), "filter")
         if any(not same(flt["value"], x.get(flt["param"])) for x in items):
             raise Fail("фильтр возвращает лишние записи")
-        it.ok(f"?{flt['param']}={flt['value']} → фильтр работает")
+        it.ok(f"?{flt['param']}={flt['value']}: фильтр работает")
     it.eye("В коде слоя БД видно WHERE / ORDER BY (или их ORM-аналог), а не сортировку списка в памяти?")
 
 
@@ -255,12 +255,12 @@ def business_rule(ctx: Ctx, it: Item) -> None:
     for spec in setups if isinstance(setups, list) else [setups]:
         resp = _rule_request(ctx, spec, pid)
         ctx.expect(resp, range(200, 300), f"подготовка {spec.get('method', 'POST')} {spec['path']}")
-        it.ok(f"подготовка {spec.get('method', 'POST')} {spec['path'].replace('{id}', str(pid))} → {resp.status_code}")
+        it.ok(f"подготовка {spec.get('method', 'POST')} {spec['path'].replace('{id}', str(pid))}: {resp.status_code}")
     spec = ctx.need("rule", "violate")
     expected = rule.get("expect_status", 409)
     resp = _rule_request(ctx, spec, pid)
     ctx.expect(resp, expected, f"нарушение правила {spec.get('method', 'POST')} {spec['path']}")
-    it.ok(f"нарушение правила → {resp.status_code}{ctx.short(resp)}")
+    it.ok(f"нарушение правила: {resp.status_code}{ctx.short(resp)}")
     it.eye("Правило в contract.json действительно проверяет фишку темы, а не что-то тривиальное?")
 
 
@@ -272,8 +272,8 @@ def stats_endpoint(ctx: Ctx, it: Item) -> None:
         ctx.post(ctx.child_path(parent[ctx.id_field]), ctx.need("child", "create"))
     after = ctx.json(ctx.expect(ctx.get(path), 200, f"GET {path}"), f"GET {path}")
     if before == after:
-        raise Fail(f"GET {path} не изменился после добавления записей — статистика не считается из БД?")
-    it.ok(f"GET {path} → 200, после добавления записей цифры изменились")
+        raise Fail(f"GET {path} не изменился после добавления записей. Статистика не считается из БД?")
+    it.ok(f"GET {path}: 200, после добавления записей цифры изменились")
     it.eye("В коде SQL с GROUP BY / COUNT / AVG (агрегат считает БД)?")
 
 
