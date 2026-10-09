@@ -1,4 +1,4 @@
-"""Лаба 3. Авторизация."""
+"""Лаба 3. Пользователи и доступ."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 import re
 import time
 
-from .core import Ctx, Fail, Item, Lab, Star, User, score_first_required, score_two
+from .core import Ctx, Fail, Item, Lab, Star, User, score_first_required
 
 HASH_PREFIXES = ("$2a$", "$2b$", "$2y$", "$argon2")
 
@@ -80,10 +80,10 @@ def needs_auth(ctx: Ctx, it: Item) -> None:
     it.ok(f"{upd.request.method} {path} с авторизацией: {upd.status_code}")
     ctx.expect(ctx.delete(path, auth=a), range(200, 300), f"DELETE {path} с авторизацией")
     it.ok(f"DELETE {path} с авторизацией: 2xx")
+    _wrong_password(ctx, it, a)
 
 
-def wrong_password(ctx: Ctx, it: Item) -> None:
-    a, _ = _users(ctx)
+def _wrong_password(ctx: Ctx, it: Item, a: User) -> None:
     wrong = _bad_login(ctx, a.username, a.password + "x")
     ctx.expect(wrong, 401, "неверный пароль")
     it.ok("неверный пароль: 401")
@@ -230,7 +230,7 @@ def jwt_secret_env(ctx: Ctx, it: Item) -> None:
 
 # ---------- ★★ роли и лимит ----------
 
-def roles(ctx: Ctx, it: Item) -> None:
+def foreign_403(ctx: Ctx, it: Item) -> None:
     a, b = _users(ctx)
     obj = ctx.create(ctx.body(), user=a)
     path = ctx.item_path(obj[ctx.id_field])
@@ -241,12 +241,43 @@ def roles(ctx: Ctx, it: Item) -> None:
     it.ok("пользователь B удаляет запись A: 403")
     ctx.expect(ctx.update(path, ctx.need("update"), ctx.body(), auth=a), range(200, 300), "владелец меняет свою запись")
     it.ok("владелец A меняет свою запись: 2xx")
+    ctx.expect(ctx.get(path, auth=b), 200, "чтение чужой записи")
+    it.ok("читать чужую запись можно: 200")
+
+
+def admin_role(ctx: Ctx, it: Item) -> None:
+    a, _ = _users(ctx)
+    obj = ctx.create(ctx.body(), user=a)
+    path = ctx.item_path(obj[ctx.id_field])
     admin_data = ctx.need("auth", "admin")
     admin = User(admin_data["username"], admin_data["password"])
     ctx.expect(ctx.update(path, ctx.need("update"), ctx.body(), auth=admin), range(200, 300), "админ меняет чужую запись")
     it.ok(f"админ «{admin.username}» меняет запись A: 2xx")
     ctx.expect(ctx.delete(path, auth=admin), range(200, 300), "админ удаляет чужую запись")
     it.ok("админ удаляет запись A: 2xx")
+    path_reg = ctx.need("auth", "register_path")
+    sneaky = ctx.new_user("bcadm")
+    body = {**ctx.credentials(sneaky), **ctx.contract["auth"].get("register_extra", {}), "role": "admin"}
+    resp = ctx.post(path_reg, body, auth=None)
+    if resp.status_code in range(200, 300):
+        data = ctx.me(sneaky)
+        if str(data.get("role", "")).lower() == "admin":
+            raise Fail('регистрация с "role": "admin" в теле дала роль admin')
+        it.ok('регистрация с "role": "admin" в теле: роль осталась обычной')
+
+
+def oauth(ctx: Ctx, it: Item) -> None:
+    path = ctx.need("auth", "oauth_path")
+    resp = ctx.get(path, auth=None)
+    if resp.status_code not in (301, 302, 303, 307, 308):
+        raise Fail(f"GET {path}: {resp.status_code}, ожидали редирект на страницу входа провайдера")
+    location = resp.headers.get("location", "")
+    if "client_id=" not in location:
+        raise Fail(f"GET {path}: редирект без client_id: {location[:120]}")
+    if "state=" not in location:
+        it.warn("в адресе редиректа нет state: без него вход уязвим для CSRF")
+    it.ok(f"GET {path}: {resp.status_code}, редирект на {location.split('?')[0]}")
+    it.eye("Вход через провайдера доходит до конца: после согласия создаётся пользователь и выдаётся токен?")
 
 
 def rate_limit(ctx: Ctx, it: Item) -> None:
@@ -268,16 +299,24 @@ def rate_limit(ctx: Ctx, it: Item) -> None:
     it.ok(f"попытка №{first_429}: 429")
 
 
+def score_admin_or_oauth(parts: list[bool]) -> int:
+    """Админ и лимит попыток вместе или вход через OAuth дают 2; одно из первых двух даёт 1."""
+    admin, limit, oauth_ok = parts
+    if (admin and limit) or oauth_ok:
+        return 2
+    return 1 if admin or limit else 0
+
+
 LAB = Lab(
     number=3,
-    title="Авторизация",
+    title="Пользователи и доступ",
     base=[
         ("1", "Регистрация, повтор: 409", register),
         ("2", "Пароль хранится хэшем", password_hash),
-        ("3", "Изменения только с авторизацией", needs_auth),
-        ("4", "Неверный пароль: 401 без подсказок", wrong_password),
-        ("5", "GET /auth/me без пароля и хэша", me),
-        ("6", "Автор записи ставится сервером", owner_from_server),
+        ("3", "Без входа 401, неверный пароль 401 без подсказок", needs_auth),
+        ("4", "GET /auth/me без пароля и хэша", me),
+        ("5", "Автор записи ставится сервером", owner_from_server),
+        ("6", "Чужую запись менять нельзя: 403", foreign_403),
     ],
     stars=[
         Star("★ JWT", score_first_required, [
@@ -286,9 +325,10 @@ LAB = Lab(
             ("Срок жизни токена", jwt_expiry),
             ("Секрет и срок из окружения", jwt_secret_env),
         ]),
-        Star("★★ роли и лимит попыток", score_two, [
-            ("Роли: чужое 403, админ может всё", roles),
-            ("5 неудачных входов: 429 (последним шагом)", rate_limit),
+        Star("★★ админ и лимит попыток или OAuth", score_admin_or_oauth, [
+            ("Роль admin может всё", admin_role),
+            ("5 неудачных входов: 429", rate_limit),
+            ("Вход через GitHub по OAuth 2.0", oauth),
         ]),
     ],
 )

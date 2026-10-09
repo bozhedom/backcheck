@@ -522,7 +522,11 @@ def run_item(ctx: Ctx, key: str, title: str, fn: Callable[[Ctx, Item], None], in
     except ContractError as exc:
         item.status, item.reason = FAIL, str(exc)
         item.lines.append(("bad", str(exc)))
-        item._print("bad", f"{exc}. Нужно дописать contract.json")
+        if indent == "  ":
+            item._print("bad", f"{exc}. Нужно дописать contract.json")
+        else:
+            item.reason = f"не сделано: {exc}"
+            item._print("info", item.reason)
     except Unreachable as exc:
         item.status, item.reason = FAIL, str(exc)
         item.lines.append(("bad", str(exc)))
@@ -530,7 +534,7 @@ def run_item(ctx: Ctx, key: str, title: str, fn: Callable[[Ctx, Item], None], in
         ctx.wait_health(10)
     verdict = {
         PASS: green("итог: ✓ засчитано"),
-        FAIL: red("итог: ✗ не засчитано"),
+        FAIL: red("итог: ✗ не засчитано") if not item.reason.startswith("не сделано") else dim("итог: не сделано"),
         MANUAL: blue("итог: ? автоматическая часть пройдена, остальное проверяется вручную"),
         HALF: yellow("итог: ◐ частично"),
     }[item.status]

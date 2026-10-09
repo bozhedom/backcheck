@@ -116,7 +116,7 @@ backcheck ask --lab 3 --edit      # случайный вопрос из бан�
   "filter": { "param": "status", "value": "active", "other": "archived" },
 
   "text_field": "title",
-  "sort": { "param": "sort", "value": "title", "field": "title" },
+  "search": { "param": "q", "field": "title" },
   "child": {
     "resource": "checks",
     "create": { "date": "2026-10-01" },
@@ -139,14 +139,27 @@ backcheck ask --lab 3 --edit      # случайный вопрос из бан�
     "password_field": "password",
     "token_field": "access_token",
     "owner_field": "owner_id",
-    "admin": { "username": "admin", "password": "admin-test-pass" }
+    "admin": { "username": "admin", "password": "admin-test-pass" },
+    "oauth_path": null
   },
 
   "frontend_url": "http://localhost:5173",
+  "cookie": null,
+  "realtime": { "type": "sse", "path": "/api/events" },
 
   "compose_service": "backend",
-  "public_url": null,
-  "second_service": null
+  "second_service": {
+    "name": "reminders",
+    "trigger": { "method": "POST", "path": "/api/habits/{id}/checks", "body": { "date": "2026-10-02" } },
+    "expect_when_down": [502, 503, 504]
+  },
+  "proxy_url": "http://localhost:8080",
+  "cache": { "path": "/api/habits/stats", "header": "X-Cache" },
+  "broker": {
+    "consumer": "notifier",
+    "trigger": { "method": "PATCH", "path": "/api/habits/{id}", "body": { "title": "Привычка {tag}" } }
+  },
+  "public_url": null
 }
 ```
 
@@ -166,15 +179,20 @@ backcheck ask --lab 3 --edit      # случайный вопрос из бан�
 | `openapi_path` | 1 ★★ | Путь к OpenAPI JSON, если он нестандартный. `/openapi.json`, `/swagger.json` и `/v3/api-docs` чекер находит сам |
 | `text_field` | 2 | Строковое поле, в которое чекер запишет строку с SQL-инъекцией |
 | `table` | 2 | Имя таблицы, если оно отличается от `resource` |
-| `sort` | 2 ★ | Параметр сортировки и поле, по которому сортируется. Минус в начале значения означает сортировку по убыванию |
 | `child` | 2 | Вторая сущность: `resource` (путь будет `/api/<resource>/{id}/<child.resource>`), тело `create` и поле связи `parent_field` |
-| `rule` | 2 ★★ | Фишка темы: подготовительные запросы `setup`, запрос, который нарушает правило, `violate`, и ожидаемый код. `{id}` в пути заменяется на id родителя, которого создаст чекер |
+| `search` | 2 ★ | Поиск по тексту: параметр (`q`) и поле, в котором ищется слово |
+| `rule` | 2 ★★ | Правило темы: подготовительные запросы `setup`, запрос, который нарушает правило, `violate`, и ожидаемый код. `{id}` в пути заменяется на id родителя, которого создаст чекер |
 | `stats_path` | 2 ★★ | Эндпоинт статистики |
-| `auth` | 3 | Пути и имена полей авторизации. `scheme`: `basic` или `bearer`. `register_extra`: дополнительные поля регистрации, например email. `admin`: тестовый админ из сидов, нужен для ★★ |
-| `frontend_url` | 4 | Адрес фронтенда, нужен для проверки страницы и CORS |
+| `auth` | 3 | Пути и имена полей авторизации. `scheme`: `basic` или `bearer`. `register_extra`: дополнительные поля регистрации, например email. `admin`: тестовый админ из сидов, нужен для ★★. `oauth_path`: адрес, с которого начинается вход через GitHub, тоже для ★★ |
+| `frontend_url` | 4 | Адрес страницы, нужен для проверки страницы, CORS и заголовков |
+| `cookie` | 4 ★★а | Вход через cookie: `login_path`, куда отправить логин и пароль, чтобы получить cookie |
+| `realtime` | 4 ★★б | Обновления в реальном времени: `type` (`sse` или `websocket`) и `path`. Поток SSE чекер проверяет сам, WebSocket вручную |
 | `compose_service` | 5 | Имя сервиса бэкенда в compose, нужно для логов и перезапуска |
-| `public_url` | 5 ★★а | Публичный адрес деплоя |
-| `second_service` | 5 ★★б | Второй сервис: `name` в compose, `trigger` (запрос к основному сервису, при котором он ходит во второй; `{id}` это новый родитель, `{tag}` случайная строка) и `expect_when_down` (какие коды ждать, когда второй сервис остановлен) |
+| `second_service` | 5 | Второй сервис: `name` в compose, `trigger` (запрос к основному сервису, при котором он ходит во второй; `{id}` это новый родитель, `{tag}` случайная строка) и `expect_when_down` (какие коды ждать, когда второй сервис остановлен) |
+| `proxy_url` | 5 ★ | Адрес прокси, через который открываются и страница, и API |
+| `cache` | 5 ★★ | Кэш: `path`, ответ которого кэшируется, и `header`, в котором сервер пишет `HIT` или `MISS` |
+| `broker` | 5 ★★ | Событие через брокер: `consumer`, сервис-получатель в compose, и `trigger`, запрос, после которого уходит событие. `{tag}` должен попасть в строку лога получателя |
+| `public_url` | 5 ★★ | Публичный адрес деплоя с `https://` |
 
 ## Лаба 5 в GitHub Actions
 

@@ -7,6 +7,8 @@ import re
 from .core import Ctx, Fail, Item, Lab, Star, same, score_two, tag
 
 HTTP_FILES = ("requests.http",)
+DEPS_FILES = ("requirements.txt", "pyproject.toml", "Pipfile", "package.json", "go.mod", "pom.xml",
+              "build.gradle", "build.gradle.kts", "composer.json", "Gemfile", "Cargo.toml")
 
 
 def _find_requests_file(ctx: Ctx):
@@ -38,7 +40,24 @@ def readme_and_requests(ctx: Ctx, it: Item) -> None:
         raise Fail(f"{req.name}: нет запросов к /health и /{ctx.resource}")
     count = len(re.findall(r"^(GET|POST|PUT|PATCH|DELETE)\s", body, re.M)) or body.count('"method"')
     it.ok(f"{req.name}: {count} запросов")
-    it.eye("В README есть тема проекта и понятный раздел «как запустить»?")
+
+    deps = _find_deps_file(ctx)
+    if deps is None:
+        raise Fail("нет файла зависимостей (requirements.txt, package.json, go.mod, pom.xml и т. п.)")
+    it.ok(f"зависимости записаны в {deps}")
+    it.eye("В README есть тема проекта и понятный раздел «как запустить» с установкой зависимостей?")
+
+
+def _find_deps_file(ctx: Ctx) -> str | None:
+    for name in DEPS_FILES:
+        if (ctx.repo / name).exists():
+            return name
+    for p in ctx.repo.glob("*/*"):
+        if p.name in DEPS_FILES or p.suffix == ".csproj":
+            if not {"node_modules", ".venv", "venv", ".git"} & set(p.parts):
+                return str(p.relative_to(ctx.repo))
+    found = next(ctx.repo.glob("*.csproj"), None)
+    return found.name if found else None
 
 
 def health(ctx: Ctx, it: Item) -> None:
@@ -246,7 +265,7 @@ LAB = Lab(
     number=1,
     title="HTTP CRUD в памяти",
     base=[
-        ("1", "README и requests.http", readme_and_requests),
+        ("1", "README, requests.http, файл зависимостей", readme_and_requests),
         ("2", "GET /health", health),
         ("3", "Создание: 201 и id", create),
         ("4", "Получение: список, по id, 404", read),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .core import Ctx, Fail, Item, Lab, Star, same, score_three, score_two, yellow
+from .core import Ctx, Fail, Item, Lab, Star, same, score_three, score_two, tag, yellow
 
 MIGRATION_HINTS = ("alembic", "migrations", "prisma/migrations", "db/migrations", "Migrations",
                    "src/main/resources/db/migration", "database/migrations", "sql")
@@ -59,8 +59,8 @@ def child_entity(ctx: Ctx, it: Item) -> None:
 
     listing = ctx.items(ctx.json(ctx.expect(ctx.get(path), 200, f"GET {path}"), f"GET {path}"), f"GET {path}")
     if str(kid[ctx.id_field]) not in {str(x.get(ctx.id_field)) for x in listing}:
-        raise Fail(f"GET {path}: в списке нет созданного ребёнка")
-    it.ok(f"GET {path}: 200, ребёнок в списке")
+        raise Fail(f"GET {path}: в списке нет созданной связанной записи")
+    it.ok(f"GET {path}: 200, связанная запись в списке")
 
     other = ctx.create(ctx.body())
     other_path = ctx.child_path(other[ctx.id_field])
@@ -68,12 +68,12 @@ def child_entity(ctx: Ctx, it: Item) -> None:
     listing = ctx.items(ctx.json(ctx.get(path), "GET"), "GET")
     foreign = [x for x in listing if parent_field and str(x.get(parent_field)) != str(pid)]
     if foreign:
-        raise Fail(f"GET {path}: в списке дети другого родителя")
-    it.ok("дети другого родителя в список не попадают")
+        raise Fail(f"GET {path}: в списке связанные записи другого родителя")
+    it.ok("записи другого родителя в список не попадают")
 
     orphan = ctx.post(ctx.child_path(ctx.contract.get("missing_id", "999999")), child["create"])
     if orphan.status_code >= 500 or orphan.status_code in range(200, 300):
-        it.warn(f"ребёнок к несуществующему родителю: {orphan.status_code} (лучше 404)")
+        it.warn(f"связанная запись к несуществующему родителю: {orphan.status_code} (лучше 404)")
 
 
 def schema_in_repo(ctx: Ctx, it: Item) -> None:
@@ -89,7 +89,7 @@ def schema_in_repo(ctx: Ctx, it: Item) -> None:
         it.info("в репо найдено: " + ", ".join(found[:6]))
     else:
         it.warn("не нашли ни миграций, ни .sql: на приёме нужно показать, откуда берётся схема")
-    it.eye("Студент показал, как схема создаётся из репо (скрипт/миграции, команда применения)?")
+    it.eye("Показано, как схема создаётся из репозитория: скрипт или миграции и команда применения?")
 
 
 def env_config(ctx: Ctx, it: Item) -> None:
@@ -123,7 +123,7 @@ def env_config(ctx: Ctx, it: Item) -> None:
     if leaks:
         raise Fail("пароль от БД в файлах репозитория: " + "; ".join(leaks[:3]))
     it.ok("строк подключения с паролем в коде нет")
-    it.eye("Строка подключения читается из переменной окружения (покажи место в коде)?")
+    it.eye("Строка подключения читается из переменной окружения (место в коде показано)?")
 
 
 def er_diagram(ctx: Ctx, it: Item) -> None:
@@ -171,72 +171,61 @@ def cascade_demo(ctx: Ctx) -> None:
     pid, kid = ctx.state.pop("child")
     resp = ctx.delete(ctx.item_path(pid))
     after = ctx.get(ctx.child_path(pid))
-    print(yellow(f"\n  Демо: удалили родителя {pid}, ответ {resp.status_code}; GET его детей, ответ {after.status_code}"
+    print(yellow(f"\n  Удалён родитель {pid}, ответ {resp.status_code}; GET его связанных записей, ответ {after.status_code}"
                  f"{ctx.short(after)}"))
-    print(yellow("  Спроси: что стало с дочерними записями и почему (CASCADE, RESTRICT, SET NULL)?"))
+    print(yellow("  Вопрос: что стало со связанными записями и почему (CASCADE, RESTRICT, SET NULL)?"))
 
 
 # ---------- ★ ----------
 
-def migrations_tool(ctx: Ctx, it: Item) -> None:
+def migrations_and_seeds(ctx: Ctx, it: Item) -> None:
     tools = [name for path, name in MIGRATION_TOOLS.items() if (ctx.repo / path).exists()]
     if tools:
         it.info("найдено: " + ", ".join(sorted(set(tools))))
     else:
         it.warn("инструмент миграций не найден автоматически")
-    it.eye("Миграции через инструмент (история миграций + команда upgrade в README)?")
+    it.eye("Миграции идут через инструмент (история файлов и команда применения в README)?")
+    it.eye("Сиды запускаются одной командой, и на чистой базе после них список не пуст?")
 
 
-def seeds(ctx: Ctx, it: Item) -> None:
-    it.eye("Студент запустил сиды на чистой БД, и список не пуст?")
+INDEX_PLAN = re.compile(r"Index Scan|Index Only Scan|Bitmap Index Scan|Bitmap Heap Scan|USING (COVERING )?INDEX|IXSCAN",
+                        re.I)
 
 
-def sql_filter_sort(ctx: Ctx, it: Item) -> None:
-    sort = ctx.need("sort")
+def index_explain(ctx: Ctx, it: Item) -> None:
+    readme = ctx.repo / "README.md"
+    text = readme.read_text(encoding="utf-8", errors="replace") if readme.exists() else ""
+    if "EXPLAIN" not in text.upper():
+        raise Fail("в README нет вывода EXPLAIN для частого запроса")
+    it.ok("в README есть EXPLAIN")
+    if not INDEX_PLAN.search(text):
+        raise Fail("в выводе EXPLAIN в README не видно индекса (Index Scan, Bitmap Index Scan, USING INDEX)")
+    it.ok("в плане запроса используется индекс")
+    it.eye("Индекс создаётся миграцией, и понятно, под какой запрос он сделан?")
+
+
+def search(ctx: Ctx, it: Item) -> None:
+    spec = ctx.need("search")
+    param = spec.get("param", "q")
+    field = spec.get("field") or ctx.need("text_field")
+    word = f"bcsearch{tag(5).lower()}"
+    hit = ctx.create(ctx.body(**{field: f"Запись {word.upper()} для поиска"}))
+    miss = ctx.create(ctx.body(**{field: f"Запись bcother{tag(5).lower()}"}))
     path = ctx.collection()
-    for _ in range(3):
-        ctx.create(ctx.body())
-    for direction in ("", "-"):
-        value = direction + sort["value"].lstrip("-")
-        resp = ctx.expect(ctx.get(path, params={sort["param"]: value, "limit": 100}), 200, f"GET {path}?{sort['param']}={value}")
-        items = ctx.items(ctx.json(resp, "sort"), "sort")
-        keys = [x.get(sort["field"]) for x in items if x.get(sort["field"]) is not None]
-        if not is_sorted_any(keys, reverse=bool(direction)):
-            raise Fail(f"?{sort['param']}={value}: порядок {sort['field']} неверный")
-        it.ok(f"?{sort['param']}={value}: отсортировано ({len(items)})")
-    if ctx.has("filter"):
-        flt = ctx.need("filter")
-        items = ctx.items(ctx.json(ctx.get(path, params={flt["param"]: flt["value"]}), "filter"), "filter")
-        if any(not same(flt["value"], x.get(flt["param"])) for x in items):
-            raise Fail("фильтр возвращает лишние записи")
-        it.ok(f"?{flt['param']}={flt['value']}: фильтр работает")
-    it.eye("В коде слоя БД видно WHERE / ORDER BY (или их ORM-аналог), а не сортировку списка в памяти?")
-
-
-def is_sorted_any(keys: list, reverse: bool) -> bool:
-    """Отсортировано ли хоть по одному из правил сравнения строк.
-
-    Разные БД и локали сортируют строки по-разному (C-локаль: заглавные раньше строчных,
-    ICU/glibc: регистр и знаки препинания почти не важны), поэтому принимаем любой из вариантов.
-    """
-    def as_date(v):
-        from .core import _as_datetime
-        return _as_datetime(v)
-
-    rules = [
-        lambda v: v,
-        lambda v: v.casefold() if isinstance(v, str) else v,
-        lambda v: "".join(ch for ch in v.casefold() if ch.isalnum()) if isinstance(v, str) else v,
-        lambda v: as_date(v) or v,
-    ]
-    for rule in rules:
-        try:
-            converted = [rule(k) for k in keys]
-            if converted == sorted(converted, reverse=reverse):
-                return True
-        except TypeError:
-            continue
-    return False
+    resp = ctx.expect(ctx.get(path, params={param: word, "limit": 100}), 200, f"GET {path}?{param}={word}")
+    items = ctx.items(ctx.json(resp, "поиск"), "поиск")
+    ids = {str(x.get(ctx.id_field)) for x in items if isinstance(x, dict)}
+    if str(hit[ctx.id_field]) not in ids:
+        raise Fail(f"GET {path}?{param}={word}: не нашлась запись, где {field} содержит {word.upper()}")
+    if str(miss[ctx.id_field]) in ids:
+        raise Fail(f"GET {path}?{param}={word}: в выдаче запись, где этого слова нет")
+    it.ok(f"?{param}={word}: нашлась запись с {word.upper()} (поиск без учёта регистра), лишних нет")
+    evil = "%' OR 1=1 --"
+    resp = ctx.get(path, params={param: evil})
+    if resp.status_code >= 500:
+        raise Fail(f"?{param}={evil}: {resp.status_code}")
+    it.ok(f"?{param}={evil!r}: {resp.status_code}, сервер не упал")
+    it.eye("Поиск выполняет база (ILIKE, полнотекстовый поиск), а не цикл по всем записям в коде?")
 
 
 # ---------- ★★ ----------
@@ -261,7 +250,7 @@ def business_rule(ctx: Ctx, it: Item) -> None:
     resp = _rule_request(ctx, spec, pid)
     ctx.expect(resp, expected, f"нарушение правила {spec.get('method', 'POST')} {spec['path']}")
     it.ok(f"нарушение правила: {resp.status_code}{ctx.short(resp)}")
-    it.eye("Правило в contract.json действительно проверяет фишку темы, а не что-то тривиальное?")
+    it.eye("Правило в contract.json проверяет ограничение темы, а проверка и запись идут в одной транзакции?")
 
 
 def stats_endpoint(ctx: Ctx, it: Item) -> None:
@@ -272,9 +261,9 @@ def stats_endpoint(ctx: Ctx, it: Item) -> None:
         ctx.post(ctx.child_path(parent[ctx.id_field]), ctx.need("child", "create"))
     after = ctx.json(ctx.expect(ctx.get(path), 200, f"GET {path}"), f"GET {path}")
     if before == after:
-        raise Fail(f"GET {path} не изменился после добавления записей. Статистика не считается из БД?")
+        raise Fail(f"GET {path} не изменился после добавления записей, статистика не пересчитывается")
     it.ok(f"GET {path}: 200, после добавления записей цифры изменились")
-    it.eye("В коде SQL с GROUP BY / COUNT / AVG (агрегат считает БД)?")
+    it.eye("Цифры считает база: в коде запрос с GROUP BY и COUNT, SUM или AVG?")
 
 
 LAB = Lab(
@@ -289,13 +278,13 @@ LAB = Lab(
         ("6", "SQL-инъекция сохраняется как текст", sql_injection),
     ],
     stars=[
-        Star("★ миграции, сиды, SQL-фильтры", score_three, [
-            ("Миграции через инструмент", migrations_tool),
-            ("Сиды с тестовыми данными", seeds),
-            ("Фильтрация и сортировка в SQL", sql_filter_sort),
+        Star("★ миграции, индекс, поиск", score_three, [
+            ("Миграции через инструмент и сиды", migrations_and_seeds),
+            ("Индекс под частый запрос, EXPLAIN в README", index_explain),
+            ("Поиск по тексту ?q=", search),
         ]),
-        Star("★★ фишка темы и статистика", score_two, [
-            ("Фишка с правильным кодом ошибки", business_rule),
+        Star("★★ правило темы и статистика", score_two, [
+            ("Правило темы: 409 внутри транзакции", business_rule),
             ("Статистика с агрегатным запросом", stats_endpoint),
         ]),
     ],

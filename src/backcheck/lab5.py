@@ -1,13 +1,14 @@
-"""Лаба 5. Docker и запуск одной командой."""
+"""Лаба 5. Docker и соседние сервисы."""
 
 from __future__ import annotations
 
 import json
 import re
+import time
 
 import httpx
 
-from .core import Ctx, Fail, Item, Lab, Star, score_any, score_two, tag
+from .core import Ctx, Fail, Item, Lab, Star, score_two, tag
 from .lab1 import check_log_line
 
 DEPS_FILES = ("requirements", "package.json", "package-lock.json", "pnpm-lock", "yarn.lock", "go.mod", "go.sum",
@@ -88,12 +89,14 @@ def compose_up(ctx: Ctx, it: Item) -> None:
         if resp.status_code != 200:
             raise Fail(f"GET {front}: {resp.status_code}")
         it.ok(f"фронт отвечает: {front}: 200")
-
-
-def foreign_machine(ctx: Ctx, it: Item) -> None:
     if ctx.ci:
         it.ok("CI: проект поднялся на чистой машине GitHub только по .env.example")
-    it.eye("Проект подняли на другой машине строго по README не дольше чем за 5 минут (комментарий в PR)?")
+        return
+    workflow = ctx.repo / ".github" / "workflows" / "backcheck.yml"
+    if not workflow.exists():
+        raise Fail("нет .github/workflows/backcheck.yml: проверка на чистой машине не подключена")
+    it.ok("workflow backcheck.yml подключён")
+    it.eye("На последнем коммите PR у workflow backcheck зелёная галочка?")
 
 
 def volume(ctx: Ctx, it: Item) -> None:
@@ -150,6 +153,37 @@ def logs(ctx: Ctx, it: Item) -> None:
     it.ok(f"в логе: {line.strip()[-110:]}")
 
 
+# ---------- база: второй сервис ----------
+
+def _trigger(ctx: Ctx, spec: dict, label: str | None = None):
+    parent = ctx.create(ctx.body())
+    path = spec["path"].replace("{id}", str(parent[ctx.id_field]))
+    body = json.loads(json.dumps(spec.get("body", {})).replace("{tag}", label or tag()))
+    return ctx.request(spec.get("method", "POST").upper(), path, json_body=body)
+
+
+def second_service(ctx: Ctx, it: Item) -> None:
+    spec = ctx.need("second_service")
+    _need_docker(ctx)
+    name = spec["name"]
+    if name not in _config(ctx).get("services", {}):
+        raise Fail(f"в compose нет сервиса {name}")
+    it.ok(f"сервис «{name}» работает в своём контейнере")
+    trigger = spec["trigger"]
+    ctx.expect(_trigger(ctx, trigger), range(200, 300), "действие, которое вызывает второй сервис")
+    it.ok(f"{trigger.get('method', 'POST')} {trigger['path']}: 2xx, основной сервис сходил во второй")
+    ctx.compose("stop", name)
+    try:
+        resp = _trigger(ctx, trigger)
+    finally:
+        ctx.compose("start", name)
+    expected = spec.get("expect_when_down", [502, 503, 504])
+    if resp.status_code not in expected:
+        raise Fail(f"при остановленном «{name}» ответ {resp.status_code}, ожидали {'/'.join(map(str, expected))}")
+    it.ok(f"«{name}» остановлен: {resp.status_code}{ctx.short(resp)}")
+    time.sleep(1)
+
+
 # ---------- ★ ----------
 
 def _own_workflows(ctx: Ctx) -> list:
@@ -158,7 +192,12 @@ def _own_workflows(ctx: Ctx) -> list:
     return [f for f in files if "backcheck" not in f.read_text(encoding="utf-8", errors="ignore")]
 
 
-def pipeline(ctx: Ctx, it: Item) -> None:
+TEST_PATTERNS = {"*.py": r"^\s*(async\s+)?def test_", "*.go": r"^func Test", "*.js": r"\b(it|test)\(",
+                 "*.ts": r"\b(it|test)\(", "*.java": r"@Test", "*.kt": r"@Test", "*.cs": r"\[(Fact|Test)\]",
+                 "*.php": r"function test"}
+
+
+def ci_tests(ctx: Ctx, it: Item) -> None:
     own = _own_workflows(ctx)
     if not own:
         raise Fail("нет своего workflow в .github/workflows (backcheck.yml не считается, это общая проверка курса)")
@@ -166,14 +205,8 @@ def pipeline(ctx: Ctx, it: Item) -> None:
         text = f.read_text(encoding="utf-8", errors="ignore")
         runs_tests = re.search(r"pytest|npm (run )?test|go test|jest|vitest|mvn .*test|gradle.*test|dotnet test|phpunit", text)
         it.ok(f"{f.name}: " + ("запускает тесты" if runs_tests else "найден"))
-    it.eye("На последнем коммите PR зелёная галочка своего workflow (вкладка Actions)?")
-
-
-def api_tests(ctx: Ctx, it: Item) -> None:
-    patterns = {"*.py": r"^\s*(async\s+)?def test_", "*.go": r"^func Test", "*.js": r"\b(it|test)\(",
-                "*.ts": r"\b(it|test)\(", "*.java": r"@Test", "*.cs": r"\[(Fact|Test)\]", "*.php": r"function test"}
     count = 0
-    for glob, rx in patterns.items():
+    for glob, rx in TEST_PATTERNS.items():
         for f in ctx.repo.rglob(glob):
             if {"node_modules", ".venv", "venv", ".git"} & set(f.parts):
                 continue
@@ -183,79 +216,159 @@ def api_tests(ctx: Ctx, it: Item) -> None:
     if count < 3:
         raise Fail(f"нашли тестов: {count}, нужно минимум 3 (создание, 404, 401)")
     it.ok(f"найдено тестов: {count}")
-    it.eye("Тесты ходят в API (создание, 404, 401), а в логе CI видно, что они прошли?")
+    it.eye("Тесты обращаются к API (создание, 404, 401), а на последнем коммите PR свой workflow зелёный?")
+
+
+PROXIES = ("nginx", "caddy", "traefik", "haproxy", "envoy")
+
+
+def reverse_proxy(ctx: Ctx, it: Item) -> None:
+    url = ctx.need("proxy_url").rstrip("/")
+    _need_docker(ctx)
+    services = _config(ctx).get("services", {})
+    found = []
+    for name, svc in services.items():
+        image = str(svc.get("image", "")).lower()
+        dockerfile = None
+        build = svc.get("build")
+        if isinstance(build, dict):
+            dockerfile = ctx.repo / build.get("context", ".") / build.get("dockerfile", "Dockerfile")
+        text = dockerfile.read_text(encoding="utf-8", errors="ignore").lower() if dockerfile and dockerfile.exists() else ""
+        if any(p in image or re.search(rf"^from\s+\S*{p}", text, re.M) for p in PROXIES):
+            found.append(name)
+    if not found:
+        raise Fail("в compose нет прокси (nginx, caddy, traefik, haproxy)")
+    it.ok("прокси в compose: " + ", ".join(found))
+    client = httpx.Client(base_url=url, timeout=10)
+    try:
+        page = client.get("/")
+        health = client.get("/health")
+        listing = client.get(ctx.collection())
+    except httpx.TransportError:
+        raise Fail(f"{url} не отвечает")
+    if page.status_code != 200 or "html" not in page.headers.get("content-type", ""):
+        raise Fail(f"GET {url}/: {page.status_code}, ожидали страницу фронтенда")
+    it.ok(f"GET {url}/: 200, страница")
+    if health.status_code != 200 or "json" not in health.headers.get("content-type", ""):
+        raise Fail(f"GET {url}/health: {health.status_code}, ожидали ответ бэкенда")
+    if listing.status_code != 200:
+        raise Fail(f"GET {url}{ctx.collection()}: {listing.status_code}")
+    it.ok(f"GET {url}/health и {ctx.collection()}: 200, запросы к API проходят через прокси")
 
 
 # ---------- ★★ ----------
 
+def _image_in_compose(ctx: Ctx, names: tuple[str, ...]) -> list[str]:
+    return [f"{svc_name} ({svc.get('image')})" for svc_name, svc in _config(ctx).get("services", {}).items()
+            if any(n in str(svc.get("image", "")).lower() for n in names)]
+
+
+def cache(ctx: Ctx, it: Item) -> None:
+    spec = ctx.need("cache")
+    path = spec.get("path") or ctx.need("stats_path")
+    header = spec.get("header", "X-Cache")
+    _need_docker(ctx)
+    stores = _image_in_compose(ctx, ("redis", "valkey", "memcached", "keydb", "dragonfly"))
+    if not stores:
+        raise Fail("в compose нет Redis, Valkey или Memcached")
+    it.ok("хранилище кэша: " + ", ".join(stores))
+    ctx.get(path)
+    second = ctx.expect(ctx.get(path), 200, f"GET {path}")
+    if second.headers.get(header, "").upper() != "HIT":
+        raise Fail(f"повторный GET {path}: {header} = {second.headers.get(header)!r}, ожидали HIT")
+    it.ok(f"повторный GET {path}: {header}: HIT")
+    parent = ctx.create(ctx.body())
+    if ctx.has("child"):
+        ctx.post(ctx.child_path(parent[ctx.id_field]), ctx.need("child", "create"))
+    fresh = ctx.expect(ctx.get(path), 200, f"GET {path} после изменения данных")
+    if fresh.headers.get(header, "").upper() == "HIT" and fresh.text == second.text:
+        raise Fail(f"после создания записи GET {path} отдал старые данные из кэша: кэш не сбрасывается")
+    it.ok(f"после создания записи: {header}: {fresh.headers.get(header)}, данные свежие")
+
+
+def broker(ctx: Ctx, it: Item) -> None:
+    spec = ctx.need("broker")
+    _need_docker(ctx)
+    brokers = _image_in_compose(ctx, ("rabbitmq", "kafka", "redpanda", "nats", "redis", "valkey"))
+    if not brokers:
+        raise Fail("в compose нет брокера (RabbitMQ, Kafka, NATS или Redis)")
+    it.ok("брокер: " + ", ".join(brokers))
+    consumer = spec["consumer"]
+    if consumer not in _config(ctx).get("services", {}):
+        raise Fail(f"в compose нет сервиса-получателя {consumer}")
+
+    def wait_in_logs(label: str, seconds: int) -> str | None:
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            out = ctx.compose("logs", "--no-color", "--tail", "300", consumer, show=False, check=False)
+            line = next((ln for ln in out.splitlines() if label in ln), None)
+            if line:
+                return line
+            time.sleep(1)
+        return None
+
+    label = f"bc{tag(6).lower()}"
+    ctx.expect(_trigger(ctx, spec["trigger"], label), range(200, 300), "действие, которое отправляет событие")
+    line = wait_in_logs(label, 15)
+    if line is None:
+        raise Fail(f"событие с меткой {label} не появилось в логах «{consumer}» за 15 секунд")
+    it.ok(f"«{consumer}» получил событие: {line.strip()[-100:]}")
+
+    late = f"bc{tag(6).lower()}"
+    ctx.compose("stop", consumer)
+    try:
+        resp = _trigger(ctx, spec["trigger"], late)
+    finally:
+        ctx.compose("start", consumer)
+    ctx.expect(resp, range(200, 300), f"действие при остановленном «{consumer}»")
+    it.ok(f"«{consumer}» остановлен, а основной сервис ответил {resp.status_code}: он не ждёт получателя")
+    line = wait_in_logs(late, 30)
+    if line is None:
+        raise Fail(f"после запуска «{consumer}» событие {late} не дошло: сообщения теряются, пока получатель лежит")
+    it.ok(f"после запуска «{consumer}» событие дошло из очереди")
+
+
 def public_deploy(ctx: Ctx, it: Item) -> None:
-    url = ctx.contract.get("public_url")
-    if not url:
-        raise Fail("не выбран (нет public_url в contract.json)")
+    url = ctx.need("public_url")
+    if not url.startswith("https://"):
+        raise Fail(f"{url}: нужен адрес с https://")
     try:
         resp = httpx.get(url.rstrip("/") + "/health", timeout=15)
     except httpx.TransportError:
         raise Fail(f"{url} не открывается")
     if resp.status_code != 200:
         raise Fail(f"{url}/health: {resp.status_code}")
-    it.ok(f"{url}/health: 200")
-    it.info(f"проверь API целиком: backcheck --lab 3 --all --url {url}")
-    it.eye("Ссылка открылась с телефона через мобильный интернет (не локальная сеть, не туннель с ноутбука)?")
+    it.ok(f"{url}/health: 200 по HTTPS")
+    it.info(f"API целиком: backcheck --lab 3 --all --url {url}")
+    it.eye("Ссылка открывается с телефона через мобильный интернет, а не только из локальной сети?")
 
 
-def _trigger(ctx: Ctx, spec: dict):
-    parent = ctx.create(ctx.body())
-    path = spec["path"].replace("{id}", str(parent[ctx.id_field]))
-    body = json.loads(json.dumps(spec.get("body", {})).replace("{tag}", tag()))
-    return ctx.request(spec.get("method", "POST").upper(), path, json_body=body)
-
-
-def second_service(ctx: Ctx, it: Item) -> None:
-    spec = ctx.contract.get("second_service")
-    if not spec:
-        raise Fail("не выбран (нет second_service в contract.json)")
-    _need_docker(ctx)
-    name = spec["name"]
-    if name not in _config(ctx).get("services", {}):
-        raise Fail(f"в compose нет сервиса {name}")
-    it.ok(f"сервис «{name}» в своём контейнере")
-    trigger = spec["trigger"]
-    ctx.expect(_trigger(ctx, trigger), range(200, 300), "действие, которое вызывает второй сервис")
-    it.ok(f"{trigger.get('method', 'POST')} {trigger['path']}: 2xx (основной сервис сходил во второй)")
-    ctx.compose("stop", name)
-    try:
-        resp = _trigger(ctx, trigger)
-    finally:
-        ctx.compose("start", name)
-    expected = spec.get("expect_when_down", [502, 503, 504])
-    if resp.status_code not in expected:
-        it.half = True
-        it.warn(f"при остановленном «{name}» ответ {resp.status_code}, ожидали {'/'.join(map(str, expected))}: "
-                "основной сервис не обрабатывает недоступность зависимости")
-        return
-    it.ok(f"«{name}» остановлен: {resp.status_code}{ctx.short(resp)}")
-    it.eye(f"В docker compose logs видно, что основной сервис ходит в «{name}» по имени сервиса?")
+def score_two_of_three(parts: list[bool]) -> int:
+    """Любые две части из трёх дают 2 балла, одна даёт 1."""
+    n = sum(parts)
+    return 2 if n >= 2 else n
 
 
 LAB = Lab(
     number=5,
-    title="Docker и запуск одной командой",
+    title="Docker и соседние сервисы",
     base=[
         ("1", "Dockerfile бэкенда", dockerfile),
         ("2", "docker compose up поднимает всё", compose_up),
-        ("3", "Запуск на чужой машине по README", foreign_machine),
-        ("4", "Данные в volume переживают down/up", volume),
-        ("5", "Конфигурация через .env, секретов в git нет", env_config),
+        ("3", "Данные в volume переживают down/up", volume),
+        ("4", "Конфигурация через .env, секретов в git нет", env_config),
+        ("5", "Второй сервис по HTTP, 503 при его падении", second_service),
         ("6", "Лог каждого запроса в docker compose logs", logs),
     ],
     stars=[
-        Star("★ CI с автотестами", score_two, [
-            ("Свой пайплайн GitHub Actions", pipeline),
-            ("Минимум 3 автотеста API", api_tests),
+        Star("★ CI и прокси", score_two, [
+            ("Свой CI с автотестами API", ci_tests),
+            ("Nginx или другой прокси как единая точка входа", reverse_proxy),
         ]),
-        Star("★★ деплой или второй сервис", score_any, [
-            ("(а) Публичный деплой", public_deploy),
-            ("(б) Второй сервис на другом языке", second_service),
+        Star("★★ кэш, брокер, деплой: два из трёх", score_two_of_three, [
+            ("Кэш в Redis", cache),
+            ("Событие через брокер сообщений", broker),
+            ("Публичный деплой с HTTPS", public_deploy),
         ]),
     ],
 )
