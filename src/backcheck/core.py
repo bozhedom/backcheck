@@ -72,14 +72,13 @@ class User:
 
 @dataclass
 class Item:
-    """Один пункт базы или одна часть звёздочки. Собирает строки вывода и ответы ручной проверки."""
+    """Один пункт базы или одна часть звёздочки. Собирает строки вывода."""
 
     ctx: "Ctx"
     key: str
     title: str
     lines: list[tuple[str, str]] = field(default_factory=list)
     pending: list[str] = field(default_factory=list)
-    eye_failed: bool = False
     half: bool = False
     status: str = PASS
     reason: str = ""
@@ -101,39 +100,21 @@ class Item:
         self.lines.append(("warn", text))
         self._print("warn", text)
 
-    def eye(self, question: str) -> bool | None:
-        """Ручная проверка. Без -i вопрос откладывается, и пункт помечается как ручной."""
-        if not self.ctx.interactive:
-            self.pending.append(question)
-            self.lines.append(("eye", question))
-            self._print("eye", question + dim("  (проверка вручную)"))
-            return None
-        answer = self.ctx.ask_yes_no(f"      {blue('?')} {question}")
-        self.lines.append(("eye", f"{question}, {'да' if answer else 'нет'}"))
-        if not answer:
-            self.eye_failed = True
-        return answer
-
-    def pause(self, instruction: str) -> bool:
-        """Просит сделать действие руками. Возвращает False, если режим не интерактивный."""
-        if not self.ctx.interactive:
-            return False
-        print(f"      {yellow('>>')} {instruction}")
-        input(dim("        нажми Enter, когда готово… "))
-        return True
+    def eye(self, question: str) -> None:
+        """То, чего не видно по HTTP. Чекер это не проверяет, пункт помечается как ручной."""
+        self.pending.append(question)
+        self.lines.append(("eye", question))
+        self._print("eye", question + dim("  (проверяется на сдаче)"))
 
 
 # ---------- Контекст прогона ----------
 
 class Ctx:
-    def __init__(self, contract: dict, repo: Path, *, base_url: str | None, interactive: bool,
-                 verbose: bool, keep: bool, ci: bool):
+    def __init__(self, contract: dict, repo: Path, *, base_url: str | None, verbose: bool, ci: bool):
         self.contract = contract
         self.repo = repo
         self.base_url = (base_url or contract.get("base_url") or "http://localhost:8000").rstrip("/")
-        self.interactive = interactive
         self.verbose = verbose
-        self.keep = keep
         self.ci = ci
         self.api = "/" + contract.get("api_prefix", "/api").strip("/")
         self.resource = contract.get("resource", "")
@@ -283,8 +264,6 @@ class Ctx:
         self.created.append((path, user))
 
     def cleanup(self) -> None:
-        if self.keep:
-            return
         for path, user in reversed(self.created):
             try:
                 self.delete(path, auth=user)
@@ -392,18 +371,6 @@ class Ctx:
             raise Fail(f"docker compose {' '.join(args)} завершился с ошибкой: {proc.stderr.strip()[-300:]}")
         return proc.stdout + proc.stderr
 
-    # ----- ввод -----
-
-    @staticmethod
-    def ask_yes_no(question: str) -> bool:
-        # «т» стоит на клавише n в русской раскладке
-        while True:
-            answer = input(f"{question} [y/n] ").strip().lower()
-            if answer in ("y", "yes", "д", "да"):
-                return True
-            if answer in ("n", "no", "н", "нет", "т"):
-                return False
-
 
 # ---------- Сравнение значений ----------
 
@@ -509,9 +476,7 @@ def run_item(ctx: Ctx, key: str, title: str, fn: Callable[[Ctx, Item], None], in
     print(f"\n{indent}{bold(key)}  {bold(title)}")
     try:
         fn(ctx, item)
-        if item.eye_failed:
-            item.status, item.reason = FAIL, "не подтверждено при ручной проверке"
-        elif item.half:
+        if item.half:
             item.status = HALF
         elif item.pending:
             item.status = MANUAL
@@ -535,7 +500,7 @@ def run_item(ctx: Ctx, key: str, title: str, fn: Callable[[Ctx, Item], None], in
     verdict = {
         PASS: green("итог: ✓ засчитано"),
         FAIL: red("итог: ✗ не засчитано") if not item.reason.startswith("не сделано") else dim("итог: не сделано"),
-        MANUAL: blue("итог: ? автоматическая часть пройдена, остальное проверяется вручную"),
+        MANUAL: blue("итог: ? автоматическая часть пройдена, остальное проверяется на сдаче"),
         HALF: yellow("итог: ◐ частично"),
     }[item.status]
     print(f"      {verdict}")

@@ -23,12 +23,10 @@ def survives_restart(ctx: Ctx, it: Item) -> None:
     obj = ctx.create(ctx.body())
     path = ctx.item_path(obj[ctx.id_field])
     it.ok(f"создана запись {path}")
-    if ctx.interactive:
-        it.pause("Останови сервис (Ctrl+C) и запусти заново.")
-    elif ctx.docker_ok() and ctx.contract.get("compose_service"):
+    if ctx.docker_ok() and ctx.contract.get("compose_service"):
         ctx.compose("restart", ctx.contract["compose_service"])
     else:
-        it.eye("Перезапуск: запусти backcheck с -i, чтобы проверить переживание перезапуска")
+        it.eye(f"После перезапуска сервиса запись {path} на месте?")
         return
     if not ctx.wait_health(60):
         raise Fail("после перезапуска /health не отвечает 60 секунд")
@@ -88,7 +86,7 @@ def schema_in_repo(ctx: Ctx, it: Item) -> None:
     if found:
         it.info("в репо найдено: " + ", ".join(found[:6]))
     else:
-        it.warn("не нашли ни миграций, ни .sql: на приёме нужно показать, откуда берётся схема")
+        it.warn("не нашли ни миграций, ни .sql: на сдаче нужно показать, откуда берётся схема")
     it.eye("Показано, как схема создаётся из репозитория: скрипт или миграции и команда применения?")
 
 

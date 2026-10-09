@@ -66,14 +66,7 @@ def create_delete(ctx: Ctx, it: Item) -> None:
     it.eye("Запись, созданная через форму, появилась в списке без F5, в Network виден POST с ответом 201?")
     obj = _marker(ctx)
     label = ctx.state["marker"][0]
-    if not it.pause(f"Удали «{label}» кнопкой в интерфейсе."):
-        it.eye(f"Удаление через интерфейс (с флагом -i чекер проверит, что «{label}» удалена на сервере)")
-        return
-    path = ctx.item_path(obj[ctx.id_field])
-    resp = ctx.get(path)
-    if resp.status_code != 404:
-        raise Fail(f"GET {path}: {resp.status_code}, со страницы пропало, а на сервере осталось")
-    it.ok(f"GET {path}: 404, запись удалена на сервере")
+    it.eye(f"Запись «{label}» удаляется кнопкой в интерфейсе и пропадает с сервера ({ctx.item_path(obj[ctx.id_field])} даёт 404)?")
 
 
 def human_errors(ctx: Ctx, it: Item) -> None:

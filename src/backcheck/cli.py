@@ -6,7 +6,6 @@ import argparse
 import importlib
 import base64
 import json
-import os
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -42,17 +41,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="backcheck",
         description="Проверяет лабы курса «Backend-разработка» по HTTP. "
-                    "Ещё команды: «backcheck jwt <токен>» разбирает JWT, «backcheck ask --lab N» выдаёт вопрос и правку для приёма.",
+                    "Ещё команды: «backcheck jwt <токен>» разбирает JWT, «backcheck ask --lab N» выдаёт вопрос по лабе.",
     )
     p.add_argument("--lab", type=int, choices=range(1, 6), required=True, metavar="N", help="номер лабы 1-5")
     p.add_argument("--stars", action="store_true", help="проверить ещё ★ и ★★")
     p.add_argument("--all", action="store_true", help="регрессия: базы всех лаб от 1 до N")
     p.add_argument("--only", metavar="K", help="только пункт K базы (1-6)")
-    p.add_argument("-i", "--interactive", action="store_true", help="спрашивать [y/n] на пунктах ручной проверки")
     p.add_argument("--url", help="адрес сервиса вместо base_url из contract.json")
-    p.add_argument("--contract", default="contract.json", help="путь к contract.json (по умолчанию ./contract.json)")
-    p.add_argument("--report", action="store_true", help="записать backcheck-report.md для описания PR")
-    p.add_argument("--keep", action="store_true", help="не удалять созданные чекером записи")
     p.add_argument("--ci", action="store_true", help="режим CI для лабы 5: сам поднимает docker compose")
     p.add_argument("-v", "--verbose", action="store_true", help="печатать каждый запрос и ответ")
     p.add_argument("--version", action="version", version=f"backcheck {__version__}")
@@ -61,9 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def check_command(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
-    contract_path = Path(args.contract).resolve()
+    contract_path = Path("contract.json").resolve()
     if not contract_path.exists():
-        print(red(f"Не найден {contract_path}. Запусти backcheck из корня репозитория или укажи --contract."))
+        print(red(f"Не найден {contract_path}. Чекер запускается из корня репозитория, где лежит contract.json."))
         return 2
     try:
         contract = json.loads(contract_path.read_text(encoding="utf-8"))
@@ -71,8 +66,7 @@ def check_command(argv: list[str]) -> int:
         print(red(f"contract.json, невалидный JSON: {exc}"))
         return 2
 
-    ctx = Ctx(contract, contract_path.parent, base_url=args.url, interactive=args.interactive,
-              verbose=args.verbose, keep=args.keep, ci=args.ci)
+    ctx = Ctx(contract, contract_path.parent, base_url=args.url, verbose=args.verbose, ci=args.ci)
     numbers = list(range(1, args.lab + 1)) if args.all else [args.lab]
 
     print(bold(f"backcheck {__version__}") + dim(f" · лаба {args.lab} · {ctx.base_url} · ресурс: {ctx.resource}"
@@ -92,7 +86,7 @@ def check_command(argv: list[str]) -> int:
             return 1
 
     if not ctx.wait_health(60 if args.ci else 5):
-        print(red(f"\nСервис не отвечает: GET {ctx.base_url}/health. Запусти его или проверь base_url / --url."))
+        print(red(f"\nСервис не отвечает: GET {ctx.base_url}/health. Запусти его или проверь base_url в contract.json или --url."))
         return 2
 
     results: list[LabResult] = []
@@ -115,14 +109,6 @@ def check_command(argv: list[str]) -> int:
         print(yellow("\nПредупреждения (на баллы не влияют, но про это могут спросить):"))
         for w in ctx.warnings:
             print(yellow(f"  ⚠ {w}"))
-    if args.report or os.environ.get("GITHUB_STEP_SUMMARY"):
-        md = report(ctx, results, args)
-        if args.report:
-            (ctx.repo / "backcheck-report.md").write_text(md, encoding="utf-8")
-            print(dim("\nОтчёт записан в backcheck-report.md. Его содержимое вставляется в описание PR."))
-        if os.environ.get("GITHUB_STEP_SUMMARY"):
-            with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
-                fh.write(md + "\n")
     return 1 if any(r.base_failed for r in results) else 0
 
 
@@ -133,7 +119,7 @@ def verdict(r: LabResult) -> str:
     if r.base_passed >= 4:
         return green("порог «принята» (≥ 4) пройден")
     if r.base_passed + r.base_manual >= 4:
-        return blue("порог пройдёт, если подтвердятся пункты ручной проверки")
+        return blue("порог пройдёт, если на сдаче подтвердятся остальные пункты")
     return red("порог «принята» (≥ 4) не пройден")
 
 
@@ -141,7 +127,7 @@ def stars_text(r: LabResult) -> str:
     parts = []
     for star, _, lo, hi in r.stars:
         name = star.title.split()[0]
-        parts.append(f"{name} {lo}/2" if lo == hi else f"{name} {lo}-{hi}/2 (ждёт ручной проверки)")
+        parts.append(f"{name} {lo}/2" if lo == hi else f"{name} {lo}-{hi}/2 (часть проверяется на сдаче)")
     return " · ".join(parts)
 
 
@@ -149,37 +135,11 @@ def print_summary(results: list[LabResult]) -> None:
     print("\n" + bold("━━ Итог ━━"))
     for r in results:
         marks = "".join({PASS: green("✓"), FAIL: red("✗"), MANUAL: blue("?")}.get(i.status, "?") for i in r.base)
-        manual = f" + {r.base_manual} на ручную проверку" if r.base_manual else ""
+        manual = f" + {r.base_manual} проверяется на сдаче" if r.base_manual else ""
         print(f"Лаба {r.lab.number}: база {r.base_passed}/{len(r.base)}{manual}  {marks}  {verdict(r)}")
         if r.stars:
             print(f"        {stars_text(r)}")
             print(dim("        звёздочки засчитываются, только если база принята и PR открыт вовремя"))
-
-
-def _cell(text: str) -> str:
-    return text.replace("|", "\\|").replace("\n", " ")[:160]
-
-
-def report(ctx: Ctx, results: list[LabResult], args) -> str:
-    icon = {PASS: "✓", FAIL: "✗", MANUAL: "?", "half": "◐"}
-    now = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M %Z")
-    out = [f"## backcheck: лаба {args.lab}", "",
-           f"`backcheck {__version__}` · коммит `{ctx.commit()}` · {now} · `{ctx.base_url}`", ""]
-    for r in results:
-        out += [f"### Лаба {r.lab.number}. {r.lab.title}", "", "| № | Пункт | | Подробности |", "| --- | --- | --- | --- |"]
-        for i in r.base:
-            detail = i.reason or (i.pending[0] + " (проверка вручную)" if i.pending else
-                                  next((t for k, t in reversed(i.lines) if k == "ok"), ""))
-            out.append(f"| {i.key} | {_cell(i.title)} | {icon.get(i.status, '?')} | {_cell(detail)} |")
-        for star, parts, lo, hi in r.stars:
-            score = f"{lo}/2" if lo == hi else f"{lo}-{hi}/2"
-            names = ", ".join(f"{icon.get(p.status, '?')} {p.title}" for p in parts)
-            out.append(f"| {star.title.split()[0]} | {_cell(names)} | {score} | |")
-        manual = f" + {r.base_manual} на ручную проверку" if r.base_manual else ""
-        out += ["", f"**База:** {r.base_passed}/{len(r.base)}{manual}" + (f" · {stars_text(r)}" if r.stars else ""), ""]
-    if ctx.warnings:
-        out += ["**Предупреждения:**", ""] + [f"- ⚠ {w}" for w in ctx.warnings] + [""]
-    return "\n".join(out)
 
 
 # ---------- backcheck jwt <токен> ----------
